@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Administración{% endblock %}
+{% block content %}
+  <div class="page-centered">
+    <h1>Administración</h1>
+  </div>
+
+  <section class="page-centered">
+    <h2>Crear nuevo usuario</h2>
+    <form method="post" class="form-box">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="action" value="create_user">
+      <label>Usuario
+        <input type="text" name="username" required>
+      </label>
+      <label>Contraseña inicial
+        <input type="password" name="password" required minlength="6">
+      </label>
+      <button type="submit" class="btn">Crear usuario</button>
+    </form>
+    <p class="hint">El usuario deberá cambiar la contraseña en su primer inicio de sesión.</p>
+  </section>
+
+  <section>
+    <h2>Usuarios existentes</h2>
+    <div class="table-wrap">
+      <table class="file-table">
+        <thead>
+          <tr>
+            <th>Usuario</th>
+            <th>Rol</th>
+            <th>Debe cambiar contraseña</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in users %}
+            <tr>
+              <td>{{ u.username }}</td>
+              <td>{{ 'Admin' if u.is_admin else 'Usuario' }}</td>
+              <td>{{ 'Sí' if u.must_change_password else 'No' }}</td>
+              <td>
+                {% if not u.is_admin %}
+                  <form method="post" onsubmit="return confirm('¿Eliminar a {{ u.username }}?');" style="display:inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="delete_user">
+                    <input type="hidden" name="user_id" value="{{ u.id }}">
+                    <button type="submit" class="btn btn-small btn-danger">Eliminar</button>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

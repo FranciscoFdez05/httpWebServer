@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Iniciar sesión{% endblock %}
+{% block content %}
+  <div class="center-screen">
+    <div>
+      <h1>Iniciar sesión</h1>
+      <form method="post" class="form-box">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label>Usuario
+          <input type="text" name="username" required autofocus>
+        </label>
+        <label>Contraseña
+          <input type="password" name="password" required>
+        </label>
+        <button type="submit" class="btn">Entrar</button>
+      </form>
+    </div>
+  </div>
+{% endblock %}

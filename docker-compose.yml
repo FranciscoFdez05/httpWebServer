@@ -1,0 +1,18 @@
+services:
+  file-server:
+    build: .
+    container_name: ftp-web
+    restart: unless-stopped
+    ports:
+      - "8080:5000"
+    environment:
+      # Set SECRET_KEY in your .env file (a long random string). If left
+      # unset, the app generates a random one at startup, but sessions
+      # will not survive a restart.
+      SECRET_KEY: ${SECRET_KEY:-}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-1024}
+    volumes:
+      - ftp_data:/data
+
+volumes:
+  ftp_data:

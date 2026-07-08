@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Configuración inicial{% endblock %}
+{% block content %}
+  <div class="center-screen">
+    <div>
+      <h1>Configuración inicial</h1>
+      <p class="hint">Todavía no existe ninguna cuenta de administrador. Crea la tuya para poder gestionar usuarios y archivos.</p>
+      <form method="post" class="form-box">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label>Usuario admin
+          <input type="text" name="username" required autofocus>
+        </label>
+        <label>Contraseña
+          <input type="password" name="password" required minlength="6">
+        </label>
+        <label>Confirmar contraseña
+          <input type="password" name="confirm_password" required minlength="6">
+        </label>
+        <button type="submit" class="btn">Crear cuenta de administrador</button>
+      </form>
+    </div>
+  </div>
+{% endblock %}

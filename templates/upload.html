@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Subir archivo{% endblock %}
+{% block content %}
+  <div class="page-centered">
+    <h1>Subir archivo</h1>
+    <form method="post" enctype="multipart/form-data" class="form-box form-box-wide">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Archivos
+        <input type="file" name="files" id="file-input" multiple required>
+      </label>
+      <ul id="file-list" class="file-list"></ul>
+
+      <fieldset>
+        <legend>Visibilidad</legend>
+        <label class="radio">
+          <input type="radio" name="visibility" value="private_me" checked onclick="document.getElementById('user-list').style.display='none'">
+          Privado — solo yo (predefinido)
+        </label>
+        <label class="radio">
+          <input type="radio" name="visibility" value="private_select" onclick="document.getElementById('user-list').style.display='block'">
+          Privado — seleccionar personas
+        </label>
+        <label class="radio">
+          <input type="radio" name="visibility" value="public" onclick="document.getElementById('user-list').style.display='none'">
+          Público — visible sin iniciar sesión
+        </label>
+      </fieldset>
+
+      <div id="user-list" style="display:none">
+        <p>Selecciona quién más puede ver este archivo:</p>
+        {% if users %}
+          {% for u in users %}
+            <label class="checkbox">
+              <input type="checkbox" name="shared_users" value="{{ u.id }}"> {{ u.username }}
+            </label>
+          {% endfor %}
+        {% else %}
+          <p class="hint">No hay otros usuarios creados todavía.</p>
+        {% endif %}
+      </div>
+
+      <button type="submit" class="btn">Subir</button>
+    </form>
+  </div>
+
+  <script>
+    document.getElementById('file-input').addEventListener('change', function (e) {
+      const list = document.getElementById('file-list');
+      list.innerHTML = '';
+      Array.from(e.target.files).forEach(function (file) {
+        const li = document.createElement('li');
+        li.textContent = file.name;
+        list.appendChild(li);
+      });
+    });
+  </script>
+{% endblock %}

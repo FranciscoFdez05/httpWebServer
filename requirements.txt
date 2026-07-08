@@ -1,0 +1,8 @@
+Flask==3.0.3
+Flask-Login==0.6.3
+Flask-WTF==1.2.2
+Werkzeug==3.0.3
+gunicorn==22.0.0
+waitress==3.0.0
+Pillow==12.2.0
+pypdf==6.14.2
