@@ -42,6 +42,9 @@ DATA_DIR = os.environ.get("DATA_DIR", DEFAULT_DATA_DIR)
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 DB_PATH = os.path.join(DATA_DIR, "app.db")
 
+# Fuente única del puerto: config.ini. Tanto waitress (más abajo) como el
+# CMD de gunicorn en el Dockerfile lo leen de aquí, para no tener el puerto
+# repetido y desincronizado en varios sitios.
 CONFIG_PATH = os.path.join(BASE_DIR, "config.ini")
 _config = configparser.ConfigParser()
 _config.read(CONFIG_PATH)
@@ -52,13 +55,18 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 app = Flask(__name__)
 _secret_key = os.environ.get("SECRET_KEY")
 if not _secret_key:
-    print(
-        "WARNING: SECRET_KEY is not set; generating a random one for this process. "
-        "Sessions will not survive a restart. Set SECRET_KEY in the environment for production."
-    )
-    _secret_key = secrets.token_hex(32)
+    # Persist a generated key to disk so sessions (and "remember me" logins)
+    # survive process restarts instead of being invalidated every time.
+    _secret_key_path = os.path.join(DATA_DIR, "secret_key")
+    if os.path.exists(_secret_key_path):
+        with open(_secret_key_path, "r") as f:
+            _secret_key = f.read().strip()
+    if not _secret_key:
+        _secret_key = secrets.token_hex(32)
+        with open(_secret_key_path, "w") as f:
+            f.write(_secret_key)
 app.secret_key = _secret_key
-app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_MB", "1024")) * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = None  # sin límite de tamaño de subida
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 app.config["REMEMBER_COOKIE_DURATION"] = timedelta(days=30)
 
@@ -529,4 +537,14 @@ def admin():
 init_db()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=SERVER_PORT)
+    # El servidor de desarrollo de Flask es de un solo hilo y limita el
+    # rendimiento en subidas grandes por LAN. waitress maneja varias
+    # conexiones en paralelo con hilos, sin capar el ancho de banda.
+    from waitress import serve
+    serve(
+        app,
+        host="0.0.0.0",
+        port=SERVER_PORT,
+        threads=16,
+        max_request_body_size=1024 ** 5,  # 1 PB, en la práctica sin límite
+    )

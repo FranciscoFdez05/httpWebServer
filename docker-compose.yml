@@ -3,16 +3,24 @@ services:
     build: .
     container_name: ftp-web
     restart: unless-stopped
+    # Mapeo explícito host:contenedor. PORT se lee de config.ini y se
+    # exporta automáticamente al llamar a ./docker-up.sh (en vez de
+    # "docker compose up" directo), así que config.ini sigue siendo la
+    # única fuente de verdad del puerto. El "8000" de aquí es solo el
+    # valor por defecto si alguna vez se lanza sin el script.
     ports:
-      - "8080:5000"
-    environment:
-      # Set SECRET_KEY in your .env file (a long random string). If left
-      # unset, the app generates a random one at startup, but sessions
-      # will not survive a restart.
-      SECRET_KEY: ${SECRET_KEY:-}
-      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-1024}
+      - "${PORT:-8000}:${PORT:-8000}"
+    # SECRET_KEY (y cualquier otro secreto futuro) vive en .env, nunca
+    # suelto aquí. Si falta la variable, app.py genera una igualmente y
+    # la persiste en /data/secret_key, pero definirla en .env es lo
+    # recomendado para controlar tú la clave real de firma de sesión.
+    env_file:
+      - .env
     volumes:
       - ftp_data:/data
+      # Monta config.ini para poder cambiar el puerto sin reconstruir la
+      # imagen (basta con "docker compose restart" tras editarlo).
+      - ./config.ini:/app/config.ini:ro
 
 volumes:
   ftp_data:
