@@ -39,7 +39,16 @@
               <td>{{ u.username }}</td>
               <td>{{ 'Admin' if u.is_admin else 'Usuario' }}</td>
               <td>{{ 'Sí' if u.must_change_password else 'No' }}</td>
-              <td>
+              <td class="actions">
+                {% if u.id != current_user.id %}
+                  <form method="post" style="display:inline" onsubmit="return confirm('¿Cambiar la contraseña de {{ u.username }}?');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="reset_password">
+                    <input type="hidden" name="user_id" value="{{ u.id }}">
+                    <input type="password" name="new_password" placeholder="Nueva contraseña" required minlength="6">
+                    <button type="submit" class="btn btn-small">Cambiar contraseña</button>
+                  </form>
+                {% endif %}
                 {% if not u.is_admin %}
                   <form method="post" onsubmit="return confirm('¿Eliminar a {{ u.username }}?');" style="display:inline">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

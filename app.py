@@ -436,6 +436,58 @@ def _can_manage_file(row):
     )
 
 
+@app.route("/permissions/<int:file_id>", methods=["GET", "POST"])
+@login_required
+def file_permissions(file_id):
+    db = get_db()
+    row = db.execute("SELECT * FROM files WHERE id = ?", (file_id,)).fetchone()
+    if not row:
+        abort(404)
+    if not _can_manage_file(row):
+        abort(403)
+
+    if request.method == "POST":
+        visibility_choice = request.form.get("visibility", "private_me")
+        selected_users = request.form.getlist("shared_users")
+        visibility = "public" if visibility_choice == "public" else "private"
+
+        db.execute("UPDATE files SET visibility = ? WHERE id = ?", (visibility, file_id))
+        # Los permisos individuales se reescriben por completo en cada guardado:
+        # así desmarcar a alguien le retira el acceso.
+        db.execute("DELETE FROM file_shares WHERE file_id = ?", (file_id,))
+        if visibility == "private" and visibility_choice == "private_select":
+            for uid in selected_users:
+                if uid.isdigit() and int(uid) != row["uploader_id"]:
+                    db.execute(
+                        "INSERT OR IGNORE INTO file_shares (file_id, user_id) VALUES (?, ?)",
+                        (file_id, int(uid)),
+                    )
+        db.commit()
+        flash("Permisos actualizados correctamente.", "success")
+        return redirect(url_for("index"))
+
+    users = db.execute(
+        "SELECT id, username FROM users WHERE id != ? ORDER BY username", (row["uploader_id"],)
+    ).fetchall()
+    shared_ids = {
+        r["user_id"]
+        for r in db.execute("SELECT user_id FROM file_shares WHERE file_id = ?", (file_id,))
+    }
+    if row["visibility"] == "public":
+        current_choice = "public"
+    elif shared_ids:
+        current_choice = "private_select"
+    else:
+        current_choice = "private_me"
+    return render_template(
+        "file_permissions.html",
+        file=row,
+        users=users,
+        shared_ids=shared_ids,
+        current_choice=current_choice,
+    )
+
+
 @app.route("/strip_metadata/<int:file_id>", methods=["POST"])
 @login_required
 def strip_metadata(file_id):
@@ -522,6 +574,31 @@ def admin():
                     flash(f"Usuario '{username}' creado. Deberá cambiar la contraseña al iniciar sesión.", "success")
                 except sqlite3.IntegrityError:
                     flash("Ese nombre de usuario ya existe.", "error")
+        elif action == "reset_password":
+            user_id = request.form.get("user_id", "")
+            new_password = request.form.get("new_password", "")
+            target = None
+            if user_id.isdigit():
+                target = db.execute(
+                    "SELECT * FROM users WHERE id = ?", (int(user_id),)
+                ).fetchone()
+            if not target:
+                flash("Usuario no encontrado.", "error")
+            elif target["id"] == current_user.id:
+                flash("Para cambiar tu propia contraseña usa 'Cambiar contraseña'.", "error")
+            elif len(new_password) < 6:
+                flash("La contraseña debe tener al menos 6 caracteres.", "error")
+            else:
+                db.execute(
+                    "UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?",
+                    (generate_password_hash(new_password), target["id"]),
+                )
+                db.commit()
+                flash(
+                    f"Contraseña de '{target['username']}' actualizada. "
+                    "Deberá cambiarla en su próximo inicio de sesión.",
+                    "success",
+                )
         elif action == "delete_user":
             user_id = request.form.get("user_id")
             if user_id and int(user_id) != current_user.id:

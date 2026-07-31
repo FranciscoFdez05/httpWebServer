@@ -38,6 +38,9 @@
                   <button type="button" class="btn btn-small" onclick='openPreview({{ f.id }}, {{ f.mime_type|tojson }}, {{ f.original_name|tojson }})'>Vista previa</button>
                 {% endif %}
                 <button type="button" class="btn btn-small" onclick='openProps({{ f.original_name|tojson }}, {{ f.uploader_name|tojson }}, {{ f.visibility|tojson }}, {{ human_size(f.size_bytes)|tojson }}, {{ f.mime_type|tojson }}, {{ f.uploaded_at[:16].replace("T", " ")|tojson }})'>Propiedades</button>
+                {% if current_user.is_authenticated and (current_user.is_admin or current_user.id == f.uploader_id) %}
+                  <a class="btn btn-small" href="{{ url_for('file_permissions', file_id=f.id) }}">Permisos</a>
+                {% endif %}
                 {% if current_user.is_authenticated and (current_user.is_admin or current_user.id == f.uploader_id) and supports_metadata_removal(f.original_name, f.mime_type) %}
                   <form method="post" action="{{ url_for('strip_metadata', file_id=f.id) }}" onsubmit="return confirm('¿Eliminar los metadatos de este archivo?');" style="display:inline">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

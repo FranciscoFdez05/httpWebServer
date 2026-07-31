@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Permisos del archivo{% endblock %}
+{% block content %}
+  <div class="page-centered">
+    <h1>Permisos del archivo</h1>
+    <p class="hint">{{ file.original_name }}</p>
+
+    <form method="post" class="form-box form-box-wide">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <fieldset>
+        <legend>Visibilidad</legend>
+        <label class="radio">
+          <input type="radio" name="visibility" value="private_me"
+                 {% if current_choice == 'private_me' %}checked{% endif %}
+                 onclick="document.getElementById('user-list').style.display='none'">
+          Privado — solo yo
+        </label>
+        <label class="radio">
+          <input type="radio" name="visibility" value="private_select"
+                 {% if current_choice == 'private_select' %}checked{% endif %}
+                 onclick="document.getElementById('user-list').style.display='block'">
+          Privado — seleccionar personas
+        </label>
+        <label class="radio">
+          <input type="radio" name="visibility" value="public"
+                 {% if current_choice == 'public' %}checked{% endif %}
+                 onclick="document.getElementById('user-list').style.display='none'">
+          Público — visible sin iniciar sesión
+        </label>
+      </fieldset>
+
+      <div id="user-list" {% if current_choice != 'private_select' %}style="display:none"{% endif %}>
+        <p>Selecciona quién más puede ver este archivo:</p>
+        {% if users %}
+          {% for u in users %}
+            <label class="checkbox">
+              <input type="checkbox" name="shared_users" value="{{ u.id }}"
+                     {% if u.id in shared_ids %}checked{% endif %}> {{ u.username }}
+            </label>
+          {% endfor %}
+        {% else %}
+          <p class="hint">No hay otros usuarios creados todavía.</p>
+        {% endif %}
+      </div>
+
+      <button type="submit" class="btn">Guardar permisos</button>
+      <a class="btn btn-small" href="{{ url_for('index') }}">Cancelar</a>
+    </form>
+  </div>
+{% endblock %}

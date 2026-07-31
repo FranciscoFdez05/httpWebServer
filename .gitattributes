@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Los scripts de shell siempre con LF: con CRLF el kernel del servidor no
+# reconoce el shebang ("bad interpreter: /usr/bin/env sh^M").
+*.sh text eol=lf
