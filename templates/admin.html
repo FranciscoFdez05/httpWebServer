@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Administración{% endblock %}
+{% block container_class %}container-wide{% endblock %}
 {% block content %}
   <div class="page-centered">
     <h1>Administración</h1>
@@ -36,12 +37,13 @@
         <tbody>
           {% for u in users %}
             <tr>
-              <td>{{ u.username }}</td>
+              <td class="col-name">{{ u.username }}</td>
               <td>{{ 'Admin' if u.is_admin else 'Usuario' }}</td>
               <td>{{ 'Sí' if u.must_change_password else 'No' }}</td>
               <td class="actions">
+                <div class="actions-inner">
                 {% if u.id != current_user.id %}
-                  <form method="post" style="display:inline" onsubmit="return confirm('¿Cambiar la contraseña de {{ u.username }}?');">
+                  <form method="post" onsubmit="return confirm('¿Cambiar la contraseña de {{ u.username }}?');">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="action" value="reset_password">
                     <input type="hidden" name="user_id" value="{{ u.id }}">
@@ -50,13 +52,14 @@
                   </form>
                 {% endif %}
                 {% if not u.is_admin %}
-                  <form method="post" onsubmit="return confirm('¿Eliminar a {{ u.username }}?');" style="display:inline">
+                  <form method="post" onsubmit="return confirm('¿Eliminar a {{ u.username }}?');">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="action" value="delete_user">
                     <input type="hidden" name="user_id" value="{{ u.id }}">
                     <button type="submit" class="btn btn-small btn-danger">Eliminar</button>
                   </form>
                 {% endif %}
+                </div>
               </td>
             </tr>
           {% endfor %}

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Archivos{% endblock %}
+{% block container_class %}container-wide{% endblock %}
 {% block content %}
   <h1>Archivos disponibles</h1>
 
@@ -22,7 +23,7 @@
         <tbody>
           {% for f in files %}
             <tr>
-              <td>{{ f.original_name }}</td>
+              <td class="col-name">{{ f.original_name }}</td>
               <td>{{ f.uploader_name }}</td>
               <td>
                 {% if f.visibility == 'public' %}
@@ -33,6 +34,7 @@
               </td>
               <td>{{ f.uploaded_at[:16].replace('T', ' ') }}</td>
               <td class="actions">
+                <div class="actions-inner">
                 <a class="btn btn-small" href="{{ url_for('download', file_id=f.id) }}">Descargar</a>
                 {% if is_previewable(f.mime_type) %}
                   <button type="button" class="btn btn-small" onclick='openPreview({{ f.id }}, {{ f.mime_type|tojson }}, {{ f.original_name|tojson }})'>Vista previa</button>
@@ -42,17 +44,18 @@
                   <a class="btn btn-small" href="{{ url_for('file_permissions', file_id=f.id) }}">Permisos</a>
                 {% endif %}
                 {% if current_user.is_authenticated and (current_user.is_admin or current_user.id == f.uploader_id) and supports_metadata_removal(f.original_name, f.mime_type) %}
-                  <form method="post" action="{{ url_for('strip_metadata', file_id=f.id) }}" onsubmit="return confirm('¿Eliminar los metadatos de este archivo?');" style="display:inline">
+                  <form method="post" action="{{ url_for('strip_metadata', file_id=f.id) }}" onsubmit="return confirm('¿Eliminar los metadatos de este archivo?');">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-small">Quitar metadatos</button>
                   </form>
                 {% endif %}
                 {% if current_user.is_authenticated and current_user.is_admin %}
-                  <form method="post" action="{{ url_for('delete_file', file_id=f.id) }}" onsubmit="return confirm('¿Eliminar este archivo?');" style="display:inline">
+                  <form method="post" action="{{ url_for('delete_file', file_id=f.id) }}" onsubmit="return confirm('¿Eliminar este archivo?');">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-small btn-danger">Eliminar</button>
                   </form>
                 {% endif %}
+                </div>
               </td>
             </tr>
           {% endfor %}

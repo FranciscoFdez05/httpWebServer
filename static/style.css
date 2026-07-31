@@ -84,6 +84,25 @@ a { transition: color 0.15s ease; }
   flex: 1;
 }
 
+/* Las páginas con tabla (archivos, usuarios) aprovechan el ancho de la
+   pantalla en vez de forzar scroll horizontal dentro de 1200px. */
+.container-wide { max-width: 1700px; }
+
+.sitefooter {
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  padding: 1rem 1.5rem;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.sitefooter a {
+  color: var(--blue);
+  text-decoration: none;
+}
+
+.sitefooter a:hover { color: var(--text); }
+
 .page-centered {
   display: flex;
   flex-direction: column;
@@ -135,6 +154,18 @@ section + section { margin-top: 2.5rem; }
   border-bottom: 1px solid var(--border);
   font-size: 0.9rem;
   color: var(--text);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* La columna del nombre se queda con el espacio sobrante y es la única que
+   puede partir en varias líneas; el resto se mantiene en una sola línea para
+   que todas las filas midan igual. */
+.file-table .col-name {
+  width: 100%;
+  white-space: normal;
+  word-break: break-word;
+  min-width: 14rem;
 }
 
 .file-table tbody tr { transition: background 0.15s ease; }
@@ -168,11 +199,42 @@ section + section { margin-top: 2.5rem; }
 .badge-public { background: rgba(59, 130, 246, 0.15); color: #93c5fd; }
 .badge-private { background: rgba(234, 179, 8, 0.15); color: #fde047; }
 
-.actions {
+/* `.actions` es una celda de tabla: no puede ser flex sin romper la
+   alineación de las columnas, así que el flex va en el div de dentro. */
+.actions { text-align: right; }
+
+.actions-inner {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
   align-items: center;
+  gap: 0.4rem;
+}
+
+.actions-inner form {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+}
+
+.actions-inner .btn { white-space: nowrap; }
+
+.actions-inner input[type="password"] {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.8rem;
+  width: 11rem;
+  transition: border-color 0.15s ease;
+}
+
+.actions-inner input[type="password"]:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(234, 179, 8, 0.15);
 }
 
 .btn {
@@ -186,6 +248,10 @@ section + section { margin-top: 2.5rem; }
   text-decoration: none;
   font-size: 0.9rem;
   font-weight: 600;
+  /* Los <button> centran su texto solos, los <a class="btn"> no: sin esto,
+     un enlace estirado a todo el ancho (ej. "Cancelar") sale pegado a la
+     izquierda mientras el botón de al lado sale centrado. */
+  text-align: center;
   transition: background 0.15s ease, transform 0.05s ease;
 }
 .btn:hover { background: var(--blue-dark); }

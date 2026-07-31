@@ -24,7 +24,7 @@
     </nav>
   </header>
 
-  <main class="container">
+  <main class="container {% block container_class %}{% endblock %}">
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         <div class="modal-overlay" id="flash-overlay">
@@ -48,6 +48,10 @@
 
     {% block content %}{% endblock %}
   </main>
+
+  <footer class="sitefooter">
+    <a href="https://github.com/FranciscoFdez05" target="_blank" rel="noopener noreferrer">github.com/FranciscoFdez05</a>
+  </footer>
 
   <script>
     function closeModal(id) {

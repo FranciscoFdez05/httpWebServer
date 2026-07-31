@@ -1,9 +1,13 @@
 import configparser
 import io
+import logging
 import mimetypes
 import os
 import secrets
+import socket
 import sqlite3
+import sys
+import time
 import uuid
 from datetime import datetime, timedelta
 
@@ -52,6 +56,18 @@ SERVER_PORT = _config.getint("server", "port", fallback=8000)
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+# Sin esto no se ve absolutamente nada por consola: waitress anuncia el
+# "Serving on ..." con logging.info, y sin handlers configurados Python solo
+# deja pasar WARNING o superior. Va a stdout para que "docker logs" lo recoja
+# igual que cuando se ejecuta a mano con "python app.py".
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    stream=sys.stdout,
+)
+log = logging.getLogger("ftp-server")
+
 app = Flask(__name__)
 _secret_key = os.environ.get("SECRET_KEY")
 if not _secret_key:
@@ -78,6 +94,28 @@ csrf = CSRFProtect(app)
 @app.before_request
 def make_session_permanent():
     session.permanent = True
+    g.request_started_at = time.monotonic()
+
+
+@app.after_request
+def log_request(response):
+    # Log de acceso tipo servidor web: ni waitress ni gunicorn (sin
+    # --access-logfile) registran las peticiones por su cuenta.
+    if request.path.startswith("/static/"):
+        return response
+    started = g.pop("request_started_at", None)
+    took_ms = (time.monotonic() - started) * 1000 if started else 0
+    user = current_user.username if current_user.is_authenticated else "anon"
+    log.info(
+        "%s %s %s -> %s (%s, %.0f ms)",
+        request.remote_addr,
+        request.method,
+        request.full_path.rstrip("?"),
+        response.status_code,
+        user,
+        took_ms,
+    )
+    return response
 
 
 def get_db():
@@ -611,17 +649,39 @@ def admin():
     return render_template("admin.html", users=users)
 
 
+def lan_ip():
+    """IP de esta máquina en la LAN, para imprimir una URL utilizable."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # No envía nada: solo hace que el SO elija la interfaz de salida.
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        s.close()
+
+
 init_db()
+log.info("Datos en %s (base de datos: %s)", DATA_DIR, DB_PATH)
 
 if __name__ == "__main__":
     # El servidor de desarrollo de Flask es de un solo hilo y limita el
     # rendimiento en subidas grandes por LAN. waitress maneja varias
     # conexiones en paralelo con hilos, sin capar el ancho de banda.
     from waitress import serve
-    serve(
-        app,
-        host="0.0.0.0",
-        port=SERVER_PORT,
-        threads=16,
-        max_request_body_size=1024 ** 5,  # 1 PB, en la práctica sin límite
-    )
+
+    log.info("Servidor escuchando en http://0.0.0.0:%s", SERVER_PORT)
+    log.info("  local: http://127.0.0.1:%s", SERVER_PORT)
+    log.info("  LAN:   http://%s:%s", lan_ip(), SERVER_PORT)
+    log.info("Pulsa Ctrl+C para parar.")
+    try:
+        serve(
+            app,
+            host="0.0.0.0",
+            port=SERVER_PORT,
+            threads=16,
+            max_request_body_size=1024 ** 5,  # 1 PB, en la práctica sin límite
+        )
+    except KeyboardInterrupt:
+        log.info("Servidor detenido.")
