@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Permite lanzarlo a mano desde la pestaña Actions.
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # La misma versión que la imagen (python:3.12-slim). Probar en otra
+          # deja pasar justo lo que rompe en producción.
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependencias
+        run: pip install -r requirements-dev.txt
+
+      - name: Tests
+        run: python -m pytest -q
+
+  scripts:
+    # Los scripts de despliegue no los cubre pytest, y un fallo de sintaxis en
+    # ellos no se descubre hasta que estás actualizando el servidor.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sintaxis de los scripts de shell
+        run: |
+          for f in docker-up.sh docker-update.sh; do
+            sh -n "$f" && echo "OK $f"
+          done
+
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck --severity=warning docker-up.sh docker-update.sh
+
+      - name: Los scripts leen bien la versión
+        run: |
+          v=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' app.py | head -n 1)
+          test -n "$v" || { echo "No se pudo leer __version__ de app.py"; exit 1; }
+          echo "Versión detectada: $v"
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validar docker-compose.yml
+        run: APP_VERSION=ci PORT=8000 docker compose config >/dev/null
+
+      - name: Construir la imagen
+        run: docker build -t httpwebserver:ci .
+
+      - name: Arrancar y esperar a /api/health
+        run: |
+          # El mismo contrato que comprueba docker-update.sh: si esto falla,
+          # una actualización en el servidor haría rollback.
+          docker run -d --name prueba -p 8000:8000 \
+            -e SECRET_KEY=clave-de-ci-suficientemente-larga \
+            -e PORT=8000 httpwebserver:ci
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8000/api/health; then
+              echo; echo "La aplicación responde."; exit 0
+            fi
+            sleep 1
+          done
+          echo "No respondió a tiempo. Log del contenedor:"
+          docker logs prueba
+          exit 1
+
+      - name: Log del contenedor
+        if: always()
+        run: docker logs prueba || true

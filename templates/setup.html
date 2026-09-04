@@ -5,16 +5,17 @@
     <div>
       <h1>Configuración inicial</h1>
       <p class="hint">Todavía no existe ninguna cuenta de administrador. Crea la tuya para poder gestionar usuarios y archivos.</p>
+      <p class="hint">La contraseña debe tener al menos {{ min_password_length }} caracteres.</p>
       <form method="post" class="form-box">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <label>Usuario admin
           <input type="text" name="username" required autofocus>
         </label>
         <label>Contraseña
-          <input type="password" name="password" required minlength="6">
+          <input type="password" name="password" required minlength="{{ min_password_length }}">
         </label>
         <label>Confirmar contraseña
-          <input type="password" name="confirm_password" required minlength="6">
+          <input type="password" name="confirm_password" required minlength="{{ min_password_length }}">
         </label>
         <button type="submit" class="btn">Crear cuenta de administrador</button>
       </form>

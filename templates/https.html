@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% block title %}HTTPS{% endblock %}
+{% block container_class %}container-wide{% endblock %}
+{% block content %}
+  <div class="page-centered">
+    <h1>HTTPS en la red local</h1>
+    <p class="hint">
+      Sin HTTPS, la contraseña y la sesión viajan en claro por la red: cualquiera
+      conectado al mismo wifi puede leerlas. Como Let's Encrypt no emite
+      certificados para direcciones como <code>192.168.1.50</code>, aquí se crea
+      una autoridad propia que se instala una vez en cada dispositivo.
+    </p>
+  </div>
+
+  <section class="page-centered">
+    <h2>Estado</h2>
+    <table class="props-table">
+      <tr>
+        <td>HTTPS</td>
+        <td>
+          {% if activo %}
+            <span class="badge badge-public">Activado</span>
+            {% if not https_en_uso %}
+              — pendiente de reiniciar el servidor
+            {% endif %}
+          {% else %}
+            <span class="badge badge-private">Desactivado</span>
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td>Conexión actual</td>
+        <td>{{ 'Cifrada (https)' if https_en_uso else 'Sin cifrar (http)' }}</td>
+      </tr>
+      {% if estado.hay_ca %}
+        <tr><td>La CA caduca en</td><td>{{ estado.ca_caduca_en_dias }} días</td></tr>
+        <tr><td>Huella de la CA (SHA-256)</td><td class="col-name">{{ estado.huella_ca }}</td></tr>
+      {% endif %}
+      {% if estado.hay_certificado %}
+        <tr><td>El certificado caduca en</td><td>{{ estado.certificado_caduca_en_dias }} días</td></tr>
+        <tr>
+          <td>Direcciones que cubre</td>
+          <td class="col-name">{{ estado.nombres | join(', ') }}</td>
+        </tr>
+      {% endif %}
+    </table>
+
+    {% if estado.hay_certificado and not cubre_esta_direccion %}
+      <p class="flash flash-error">
+        El certificado no cubre <strong>{{ host_actual }}</strong>, que es la
+        dirección por la que has entrado. El navegador seguirá avisando aunque
+        la CA esté instalada. Pulsa «Regenerar certificado» aquí abajo: se
+        firmará con la misma CA, así que no habrá que reinstalar nada.
+      </p>
+    {% endif %}
+  </section>
+
+  {% if not estado.hay_ca %}
+
+    <section class="page-centered">
+      <h2>Activar</h2>
+      <p class="hint">
+        Se creará una autoridad certificadora propia y un certificado para este
+        servidor. El HTTPS no empieza a funcionar hasta que reinicies el
+        servidor, así tienes tiempo de instalar el certificado antes.
+      </p>
+      <form method="post" class="form-box form-box-wide">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="accion" value="activar">
+        <label>Direcciones por las que se entra a este servidor
+          <input type="text" name="nombres" value="{{ nombres_sugeridos }}">
+        </label>
+        <p class="hint">
+          Separadas por espacios. Incluye todas las que uses: la IP fija del
+          servidor, su nombre de red, y cualquier otra por la que entres. Se
+          añade automáticamente <code>{{ host_actual }}</code>, que es por donde
+          estás entrando ahora.
+        </p>
+        <button type="submit" class="btn">Crear certificado y activar HTTPS</button>
+      </form>
+    </section>
+
+  {% else %}
+
+    <section class="page-centered">
+      <h2>1. Descarga el certificado</h2>
+      <p class="hint">
+        Es el certificado <strong>público</strong> de la autoridad. Instálalo en
+        cada dispositivo desde el que entres al servidor.
+      </p>
+      <p>
+        <a class="btn" href="{{ url_for('descargar_ca') }}">Descargar el certificado (ca.crt)</a>
+      </p>
+      <p class="hint">
+        Desde el móvil, abre esta dirección directamente en el navegador:<br>
+        <code>{{ request.scheme }}://{{ host_actual }}{{ url_for('descargar_ca') }}</code><br>
+        No hace falta iniciar sesión, así que un dispositivo nuevo puede
+        descargarlo sin más.
+      </p>
+    </section>
+
+    <section class="page-centered">
+      <h2>2. Instálalo</h2>
+
+      <h3>Windows</h3>
+      <ol class="hint">
+        <li>Doble clic en <code>servidor-archivos-ca.crt</code> → <em>Instalar certificado</em>.</li>
+        <li>Elige <strong>Equipo local</strong> (pedirá permiso de administrador).</li>
+        <li>Marca <em>Colocar todos los certificados en el siguiente almacén</em> y
+            elige <strong>Entidades de certificación raíz de confianza</strong>.</li>
+        <li>Firefox usa su propio almacén: <em>Ajustes → Privacidad y seguridad →
+            Certificados → Ver certificados → Autoridades → Importar</em>.</li>
+      </ol>
+
+      <h3>Android</h3>
+      <ol class="hint">
+        <li><em>Ajustes → Seguridad → Cifrado y credenciales → Instalar un certificado
+            → Certificado de CA</em>, y elige el archivo descargado.</li>
+        <li>Android avisará de que «la red podría estar supervisada». Es el aviso
+            normal al instalar una CA propia.</li>
+        <li>Chrome funcionará. Firefox en Android <strong>no</strong> usa el almacén
+            del sistema y seguirá avisando.</li>
+      </ol>
+
+      <h3>iPhone y iPad</h3>
+      <ol class="hint">
+        <li>Abre el enlace en <strong>Safari</strong> (Chrome en iOS no ofrece
+            instalar perfiles) y acepta la descarga del perfil.</li>
+        <li><em>Ajustes → Perfil descargado → Instalar</em>.</li>
+        <li><strong>Este paso hace falta y es el que casi todo el mundo se salta:</strong>
+            <em>Ajustes → General → Información → Ajustes de confianza de
+            certificados</em>, y activa el interruptor de
+            «{{ estado.huella_ca and 'Servidor de Archivos - CA local' }}».
+            Sin esto el certificado está instalado pero iOS no confía en él, y
+            el aviso sigue saliendo igual.</li>
+      </ol>
+
+      <h3>macOS y Linux</h3>
+      <ol class="hint">
+        <li>macOS: doble clic → Acceso a Llaveros → busca el certificado →
+            <em>Obtener información → Confianza → Confiar siempre</em>.</li>
+        <li>Linux (Debian/Ubuntu):
+            <code>sudo cp ca.crt /usr/local/share/ca-certificates/servidor-archivos.crt &amp;&amp; sudo update-ca-certificates</code></li>
+      </ol>
+
+      <p class="hint">
+        Para comprobar que has instalado el certificado correcto, su huella
+        SHA-256 debe coincidir con la de arriba.
+      </p>
+    </section>
+
+    <section class="page-centered">
+      <h2>3. Reinicia el servidor</h2>
+      <p class="hint">
+        El HTTPS se activa al arrancar, así que hace falta reiniciar. En el
+        servidor: <code>docker compose restart</code>. Después entra por
+        <code>https://{{ host_actual }}</code>.
+      </p>
+    </section>
+
+    <section class="page-centered">
+      <h2>Mantenimiento</h2>
+      <div class="form-box form-box-wide">
+        <form method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="accion" value="regenerar">
+          <label>Direcciones que debe cubrir
+            <input type="text" name="nombres" value="{{ nombres_sugeridos }}">
+          </label>
+          <p class="hint">
+            Úsalo si cambia la IP del servidor o si añades una dirección nueva.
+            Se firma con la <strong>misma</strong> autoridad, así que los
+            dispositivos que ya la tienen instalada no hay que tocarlos.
+          </p>
+          <button type="submit" class="btn">Regenerar certificado del servidor</button>
+        </form>
+
+        {% if not activo %}
+          <form method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="accion" value="activar">
+            <input type="hidden" name="nombres" value="{{ nombres_sugeridos }}">
+            <button type="submit" class="btn">Volver a activar el HTTPS</button>
+          </form>
+        {% else %}
+          <form method="post" data-confirm="¿Desactivar el HTTPS? Habrá que reiniciar el servidor y volverá a ir por HTTP sin cifrar.">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="accion" value="desactivar">
+            <button type="submit" class="btn btn-danger">Desactivar HTTPS</button>
+          </form>
+          <p class="hint">
+            Desactivarlo no borra los certificados: si vuelves a activarlo, se
+            reutiliza la misma autoridad y no hay que reinstalar nada.
+          </p>
+        {% endif %}
+      </div>
+    </section>
+
+  {% endif %}
+
+  <div class="page-centered">
+    <p><a class="btn btn-small" href="{{ url_for('admin') }}">Volver a Administración</a></p>
+  </div>
+{% endblock %}

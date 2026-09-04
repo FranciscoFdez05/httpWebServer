@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Mi Servidor de Archivos{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <!-- defer: se descarga en paralelo y se ejecuta con el DOM ya montado, que es
+       lo que necesitan los enganches de app.js. -->
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -31,7 +34,8 @@
           <div class="modal modal-flash">
             <div class="modal-header">
               <h2>Aviso</h2>
-              <button type="button" class="modal-close" onclick="closeModal('flash-overlay')">&times;</button>
+              <button type="button" class="modal-close"
+                      data-action="close-modal" data-modal="flash-overlay">&times;</button>
             </div>
             <div class="modal-body">
               {% for category, message in messages %}
@@ -40,9 +44,6 @@
             </div>
           </div>
         </div>
-        <script>
-          document.getElementById('flash-overlay').classList.add('open');
-        </script>
       {% endif %}
     {% endwith %}
 
@@ -52,15 +53,5 @@
   <footer class="sitefooter">
     <a href="https://github.com/FranciscoFdez05" target="_blank" rel="noopener noreferrer">github.com/FranciscoFdez05</a>
   </footer>
-
-  <script>
-    function closeModal(id) {
-      document.getElementById(id).classList.remove('open');
-      const previewBody = document.getElementById('preview-body');
-      if (id === 'preview-overlay' && previewBody) {
-        previewBody.innerHTML = '';
-      }
-    }
-  </script>
 </body>
 </html>

@@ -13,24 +13,24 @@
         <label class="radio">
           <input type="radio" name="visibility" value="private_me"
                  {% if current_choice == 'private_me' %}checked{% endif %}
-                 onclick="document.getElementById('user-list').style.display='none'">
+                 >
           Privado — solo yo
         </label>
         <label class="radio">
           <input type="radio" name="visibility" value="private_select"
                  {% if current_choice == 'private_select' %}checked{% endif %}
-                 onclick="document.getElementById('user-list').style.display='block'">
+                 >
           Privado — seleccionar personas
         </label>
         <label class="radio">
           <input type="radio" name="visibility" value="public"
                  {% if current_choice == 'public' %}checked{% endif %}
-                 onclick="document.getElementById('user-list').style.display='none'">
+                 >
           Público — visible sin iniciar sesión
         </label>
       </fieldset>
 
-      <div id="user-list" {% if current_choice != 'private_select' %}style="display:none"{% endif %}>
+      <div id="user-list" class="{% if current_choice != 'private_select' %}hidden{% endif %}">
         <p>Selecciona quién más puede ver este archivo:</p>
         {% if users %}
           {% for u in users %}

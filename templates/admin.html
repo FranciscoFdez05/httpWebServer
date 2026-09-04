@@ -4,6 +4,7 @@
 {% block content %}
   <div class="page-centered">
     <h1>Administración</h1>
+    <p><a class="btn btn-small" href="{{ url_for('admin_https') }}">🔒 HTTPS y certificados</a></p>
   </div>
 
   <section class="page-centered">
@@ -15,11 +16,11 @@
         <input type="text" name="username" required>
       </label>
       <label>Contraseña inicial
-        <input type="password" name="password" required minlength="6">
+        <input type="password" name="password" required minlength="{{ min_password_length }}">
       </label>
       <button type="submit" class="btn">Crear usuario</button>
     </form>
-    <p class="hint">El usuario deberá cambiar la contraseña en su primer inicio de sesión.</p>
+    <p class="hint">Mínimo {{ min_password_length }} caracteres. El usuario deberá cambiarla en su primer inicio de sesión.</p>
   </section>
 
   <section>
@@ -43,16 +44,17 @@
               <td class="actions">
                 <div class="actions-inner">
                 {% if u.id != current_user.id %}
-                  <form method="post" onsubmit="return confirm('¿Cambiar la contraseña de {{ u.username }}?');">
+                  <form method="post" data-confirm="¿Cambiar la contraseña de {{ u.username }}?">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="action" value="reset_password">
                     <input type="hidden" name="user_id" value="{{ u.id }}">
-                    <input type="password" name="new_password" placeholder="Nueva contraseña" required minlength="6">
+                    <input type="password" name="new_password" placeholder="Nueva contraseña"
+                           required minlength="{{ min_password_length }}">
                     <button type="submit" class="btn btn-small">Cambiar contraseña</button>
                   </form>
                 {% endif %}
                 {% if not u.is_admin %}
-                  <form method="post" onsubmit="return confirm('¿Eliminar a {{ u.username }}?');">
+                  <form method="post" data-confirm="¿Eliminar a {{ u.username }}? Se borrarán también sus archivos.">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="action" value="delete_user">
                     <input type="hidden" name="user_id" value="{{ u.id }}">

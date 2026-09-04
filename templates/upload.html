@@ -3,7 +3,8 @@
 {% block content %}
   <div class="page-centered">
     <h1>Subir archivo</h1>
-    <form method="post" enctype="multipart/form-data" class="form-box form-box-wide">
+    <form method="post" enctype="multipart/form-data" class="form-box form-box-wide"
+          id="upload-form" data-done-url="{{ url_for('index') }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>Archivos
         <input type="file" name="files" id="file-input" multiple required>
@@ -13,20 +14,20 @@
       <fieldset>
         <legend>Visibilidad</legend>
         <label class="radio">
-          <input type="radio" name="visibility" value="private_me" checked onclick="document.getElementById('user-list').style.display='none'">
+          <input type="radio" name="visibility" value="private_me" checked>
           Privado — solo yo (predefinido)
         </label>
         <label class="radio">
-          <input type="radio" name="visibility" value="private_select" onclick="document.getElementById('user-list').style.display='block'">
+          <input type="radio" name="visibility" value="private_select">
           Privado — seleccionar personas
         </label>
         <label class="radio">
-          <input type="radio" name="visibility" value="public" onclick="document.getElementById('user-list').style.display='none'">
+          <input type="radio" name="visibility" value="public">
           Público — visible sin iniciar sesión
         </label>
       </fieldset>
 
-      <div id="user-list" style="display:none">
+      <div id="user-list" class="hidden">
         <p>Selecciona quién más puede ver este archivo:</p>
         {% if users %}
           {% for u in users %}
@@ -41,7 +42,7 @@
 
       <button type="submit" class="btn" id="upload-btn">Subir</button>
 
-      <div id="upload-progress" class="upload-progress" style="display:none">
+      <div id="upload-progress" class="upload-progress hidden">
         <div class="upload-progress-bar-track">
           <div class="upload-progress-bar-fill" id="upload-progress-fill"></div>
         </div>
@@ -54,80 +55,4 @@
     </form>
   </div>
 
-  <script>
-    document.getElementById('file-input').addEventListener('change', function (e) {
-      const list = document.getElementById('file-list');
-      list.innerHTML = '';
-      Array.from(e.target.files).forEach(function (file) {
-        const li = document.createElement('li');
-        li.textContent = file.name;
-        list.appendChild(li);
-      });
-    });
-
-    function formatBytes(bytes) {
-      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-      let size = bytes, i = 0;
-      while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
-      return size.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
-    }
-
-    function formatTime(seconds) {
-      if (!isFinite(seconds) || seconds < 0) return '--';
-      seconds = Math.round(seconds);
-      const m = Math.floor(seconds / 60);
-      const s = seconds % 60;
-      return m > 0 ? m + ' min ' + s + ' s' : s + ' s';
-    }
-
-    const form = document.querySelector('.form-box-wide');
-    form.addEventListener('submit', function (e) {
-      e.preventDefault();
-
-      const progressBox = document.getElementById('upload-progress');
-      const fill = document.getElementById('upload-progress-fill');
-      const pctLabel = document.getElementById('upload-progress-pct');
-      const speedLabel = document.getElementById('upload-progress-speed');
-      const etaLabel = document.getElementById('upload-progress-eta');
-      const submitBtn = document.getElementById('upload-btn');
-
-      progressBox.style.display = 'block';
-      submitBtn.disabled = true;
-
-      const formData = new FormData(form);
-      const xhr = new XMLHttpRequest();
-      const startTime = Date.now();
-
-      xhr.upload.addEventListener('progress', function (evt) {
-        if (!evt.lengthComputable) return;
-        const elapsedSec = (Date.now() - startTime) / 1000;
-        const pct = (evt.loaded / evt.total) * 100;
-        const speed = elapsedSec > 0 ? evt.loaded / elapsedSec : 0;
-        const remainingBytes = evt.total - evt.loaded;
-        const eta = speed > 0 ? remainingBytes / speed : Infinity;
-
-        fill.style.width = pct.toFixed(1) + '%';
-        pctLabel.textContent = pct.toFixed(0) + '% (' + formatBytes(evt.loaded) + ' / ' + formatBytes(evt.total) + ')';
-        speedLabel.textContent = speed > 0 ? formatBytes(speed) + '/s' : '';
-        etaLabel.textContent = pct >= 100 ? 'Finalizando…' : 'Tiempo estimado: ' + formatTime(eta);
-      });
-
-      xhr.addEventListener('load', function () {
-        if (xhr.status >= 200 && xhr.status < 400) {
-          window.location.href = xhr.responseURL || '{{ url_for("index") }}';
-        } else {
-          submitBtn.disabled = false;
-          etaLabel.textContent = 'Error al subir el archivo.';
-        }
-      });
-
-      xhr.addEventListener('error', function () {
-        submitBtn.disabled = false;
-        etaLabel.textContent = 'Error de red durante la subida.';
-      });
-
-      xhr.open('POST', form.action || window.location.href, true);
-      xhr.send(formData);
-    });
-  </script>
 {% endblock %}

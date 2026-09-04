@@ -1,4 +1,5 @@
-# FTP-Server
+# httpWebServer
+
 ---
 Servidor web para compartir archivos en tu red local: subes, decides quién puede
 ver cada archivo (solo tú, usuarios concretos o cualquiera) y lo levantas entero
@@ -16,24 +17,36 @@ con un solo comando gracias a Docker.
 - 👁️ **Permisos por archivo**: público (descargable sin iniciar sesión), privado
   solo para ti, o privado compartido con una lista concreta de usuarios. Se puede
   cambiar en cualquier momento desde la vista de permisos.
-- 📤 **Subidas sin límite de tamaño**: el tope real lo pone tu disco, no la app.
-  Se pueden subir varios archivos a la vez.
+- 📤 **Subidas sin límite de tamaño** por defecto: el tope real lo pone tu disco.
+  Se pueden subir varios archivos a la vez. Si lo expones fuera de la LAN puedes
+  poner un límite por subida y una cuota por usuario (`MAX_UPLOAD_MB`,
+  `USER_QUOTA_MB`), y el servidor reserva siempre un margen de disco libre para
+  que nadie pueda dejarlo inservible llenándolo.
 - 🔍 **Vista previa en el navegador** de imágenes, PDF, audio, vídeo y texto,
   sin tener que descargar nada. La lista de tipos permitidos es una allowlist
   explícita, para que no se pueda ejecutar HTML o SVG malicioso.
 - 🧹 **Borrado de metadatos** de imágenes y PDFs con un clic, útil antes de
   compartir algo públicamente.
 - 🛡️ **Seguridad**: protección CSRF en todos los formularios, contraseñas
-  hasheadas y nombres de archivo saneados en disco.
+  hasheadas con política mínima, bloqueo por intentos fallidos de login,
+  cabeceras de seguridad (CSP sin `unsafe-inline`, HSTS con TLS) y nombres de
+  archivo saneados en disco.
+- 🔒 **HTTPS en la red local con un clic**: desactivado por defecto. Al activarlo
+  desde *Administración → HTTPS* se crea una autoridad certificadora propia, se
+  firma el certificado del servidor y se te da el certificado para descargar e
+  instalar en el PC y en el móvil, con las instrucciones de cada sistema. A
+  partir de ahí el candado sale verde de verdad, sin avisos que ignorar.
+- 🔄 **Actualización con vuelta atrás**: `./docker-update.sh` actualiza, espera a
+  que la versión nueva responda y vuelve sola a la anterior si no arranca.
 - 📜 **Logs por consola**: cada petición queda registrada con IP, método, ruta,
   código de respuesta, usuario y tiempo de proceso.
 
 ## 🖥️ Requisitos
 ---
 
-- 🐳 **Docker** y **Docker Compose** (método recomendado).
-- 🐍 **Python 3** en el host: lo usa `docker-up.sh` para leer `config.ini` y
-  generar el `.env` inicial. No hace falta instalar nada más, solo el intérprete.
+- 🐳 **Docker** y **Docker Compose** (método recomendado). Nada más: los scripts
+  resuelven el puerto y la versión con `sed` y `awk`, sin necesitar Python en el
+  host.
 
 Si prefieres ejecutarlo sin Docker, necesitas Python 3 y las dependencias de
 [`requirements.txt`](requirements.txt) (Flask, Flask-Login, Flask-WTF, Pillow,
@@ -45,8 +58,8 @@ pypdf y waitress).
 ### 🚀 Con Docker (recomendado)
 
 ```bash
-git clone https://github.com/FranciscoFdez05/FTP-Server.git
-cd FTP-Server
+git clone https://github.com/FranciscoFdez05/httpWebServer.git
+cd httpWebServer
 chmod +x docker-up.sh   # solo la primera vez
 ./docker-up.sh
 ```
@@ -82,9 +95,9 @@ Arranca con **waitress** (multihilo, para que las subidas grandes por LAN no se
 atasquen) y muestra por consola la URL local y la de la red:
 
 ```
-[INFO] ftp-server: Servidor escuchando en http://0.0.0.0:8000
-[INFO] ftp-server:   local: http://127.0.0.1:8000
-[INFO] ftp-server:   LAN:   http://192.168.1.152:8000
+[INFO] httpWebServer: Servidor escuchando en http://0.0.0.0:8000
+[INFO] httpWebServer:   local: http://127.0.0.1:8000
+[INFO] httpWebServer:   LAN:   http://192.168.1.152:8000
 ```
 
 ## 📋 Guía de uso 🕹️
@@ -112,28 +125,126 @@ Quien no ha iniciado sesión solo ve los archivos marcados como públicos.
 
 ### ⚙️ Configuración
 
-- **Puerto** → `config.ini` (`[server] port`). Es la única fuente de verdad: lo
-  leen tanto waitress como gunicorn. Tras cambiarlo, relanza `./docker-up.sh`.
-- **SECRET_KEY** → `.env` (nunca se sube a git). Firma las cookies de sesión y
-  los tokens CSRF; si la cambias, se cierra la sesión de todo el mundo.
-- **Datos** → volumen Docker `ftp_data`, montado en `/data` dentro del
-  contenedor (`/data/uploads` para los archivos y `/data/app.db` para la base de
-  datos). Sobrevive a `docker compose down` y a reconstruir la imagen.
+Hay dos ficheros y la diferencia importa:
+
+- **`config.ini`** son los **valores de fábrica**. Viaja con el código y se
+  actualiza con él, así que editarlo en un servidor hace que cada `git pull` dé
+  un conflicto. Sirve como documentación: cada ajuste lleva encima el nombre de
+  su variable de entorno, en la línea que empieza por `· env`.
+- **`.env`** es la configuración de **tu instalación**. No se versiona, así que
+  sobrevive a las actualizaciones, y **siempre manda** sobre `config.ini`. Es
+  aquí donde se configura un servidor real. Ver [`.env.example`](.env.example).
+
+Los ajustes principales:
+
+| Ajuste | Variable | Por defecto | Para qué |
+| --- | --- | --- | --- |
+| Puerto | `PORT` | `8000` | Puerto publicado y de escucha |
+| Clave de sesión | `SECRET_KEY` | (se genera) | Firma cookies y tokens CSRF |
+| Proxy con TLS delante | `BEHIND_PROXY` | `false` | Cookies `Secure` + IP real del cliente |
+| Límite por subida | `MAX_UPLOAD_MB` | `0` (sin límite) | Frenar subidas enormes |
+| Cuota por usuario | `USER_QUOTA_MB` | `0` (sin cuota) | Repartir el disco |
+| Reserva de disco | `MIN_FREE_DISK_MB` | `1024` | Que el volumen no se llene del todo |
+| Longitud mínima de contraseña | `MIN_PASSWORD_LENGTH` | `12` | Política de contraseñas |
+| Forzar HTTP | `HTTPS_ENABLED` | (sin fijar) | `false` recupera el arranque si un certificado falla |
+| Intentos antes de bloquear | `LOGIN_MAX_ATTEMPTS` | `10` | Frenar la fuerza bruta |
+
+**Datos** → volumen Docker `ftp_data`, montado en `/data` dentro del contenedor
+(`/data/uploads` para los archivos, `/data/app.db` para la base de datos y
+`/data/backups` para las copias previas a cada actualización). Sobrevive a
+`docker compose down` y a reconstruir la imagen.
+
+### 🔄 Actualizar una instalación en marcha
+
+```bash
+./docker-update.sh
+```
+
+No es `git pull && ./docker-up.sh`. El script, por orden:
+
+1. Se para si has editado `config.ini` en el servidor (el pull chocaría) y te
+   explica que eso va en `.env`.
+2. Etiqueta la imagen que está corriendo, para tener a dónde volver.
+3. Copia la base de datos con la API `backup` de SQLite, antes de tocar nada.
+4. Hace el `git pull`, construye la imagen nueva etiquetada con su versión y
+   la levanta.
+5. **Espera a que `/api/health` responda.** Si no lo hace en 90 s, enseña el log
+   y vuelve solo a la imagen anterior.
+
+Lo que el script *no* deshace es una migración del esquema: para eso está la
+copia del paso 3, cuya ruta se imprime.
+
+Para reconstruir sin traer cambios: `./docker-update.sh --sin-pull`.
 
 ### 🧰 Comandos útiles
 
 ```bash
-docker compose ps            # estado del contenedor
-docker logs -f ftp-web       # logs en vivo
-docker compose down          # parar (sin borrar datos)
-./docker-up.sh               # (re)construir y levantar
+docker compose ps                     # estado del contenedor (y si está healthy)
+docker logs -f ftp-web                # logs en vivo
+curl -k https://localhost:8000/api/health  # ¿responde? (-k si el HTTPS es propio)
+docker compose down                   # parar (sin borrar datos)
+./docker-up.sh                        # instalación nueva: construir y levantar
+./docker-update.sh                    # instalación existente: actualizar
+python -m pytest -q                   # tests (pip install -r requirements-dev.txt)
 ```
 
-### ⚠️ Nota de seguridad
+### 🔒 Activar HTTPS en la red local
 
-Está pensado para una red local de confianza: va por HTTP plano, sin
-rate-limiting ni 2FA. Si lo expones a internet, ponlo detrás de un proxy inverso
-con TLS.
+Por defecto va por HTTP sin cifrar. Para cifrarlo **sin salir de la LAN** no
+sirve Let's Encrypt: no emite certificados para direcciones como
+`192.168.1.50`. La solución es una autoridad certificadora propia, y el
+servidor la crea y la reparte por ti.
+
+1. Entra como administrador en **Administración → 🔒 HTTPS y certificados**.
+2. Revisa las direcciones que debe cubrir el certificado (viene rellenado con
+   la que estás usando y las IPs del servidor) y pulsa **Crear certificado**.
+3. **Descarga `ca.crt` e instálalo** en cada PC y móvil. La página trae las
+   instrucciones de Windows, Android, iPhone, macOS y Linux. Desde el móvil
+   puedes abrir directamente `http://<ip>:<puerto>/ca.crt` — no hace falta
+   iniciar sesión.
+4. Reinicia el servidor: `docker compose restart`.
+5. Entra por `https://<ip>:<puerto>`.
+
+Detalles que evitan los tropiezos habituales:
+
+- **En iPhone hay un segundo paso** que casi todo el mundo se salta: después de
+  instalar el perfil, hay que activarlo en *Ajustes → General → Información →
+  Ajustes de confianza de certificados*. Sin eso el aviso sigue saliendo.
+- **Si cambia la IP del servidor**, usa *Regenerar certificado*: se firma con la
+  misma autoridad, así que **no** hay que reinstalar nada en los dispositivos.
+- **Desactivar el HTTPS no borra los certificados**, para que reactivarlo no
+  obligue a repetir la instalación en todos lados.
+- La clave privada de la autoridad (`ca.key`) vive en `/data/tls` con permisos
+  `600` y **nunca** se sirve por HTTP. Guárdala como guardarías una contraseña:
+  quien la tenga puede suplantar cualquier web ante los dispositivos que hayan
+  instalado la CA. `./docker-update.sh` la copia a `backups/tls` al actualizar.
+- Si un certificado roto impidiera arrancar, `HTTPS_ENABLED=false` en `.env`
+  fuerza el arranque en HTTP.
+
+Esto cifra el tráfico dentro de tu red. Para exponer el servidor a internet
+sigue siendo mejor un proxy con un certificado público:
+
+### ⚠️ Exponerlo fuera de la LAN
+
+Por defecto va por **HTTP plano**, que es lo razonable en una red local de
+confianza pero no fuera de ella: sin TLS, la contraseña y la cookie de sesión
+viajan en claro y cualquiera en el mismo camino las lee.
+
+Para exponerlo a internet hacen falta dos cosas, y las dos:
+
+1. **Un proxy inverso con TLS** delante (Caddy es el de menos trabajo; también
+   valen nginx o Traefik).
+2. **`BEHIND_PROXY=true` en `.env`.** Marca las cookies como `Secure` y hace que
+   el servidor lea la IP real del cliente de las cabeceras `X-Forwarded-*`. Sin
+   esto, todas las peticiones parecen venir del proxy y el bloqueo por intentos
+   fallidos cuenta a todo el mundo en el mismo cubo, con lo que deja de servir.
+
+   Actívalo **solo cuando el proxy ya esté puesto**: con `Secure` y sin TLS, el
+   navegador nunca devuelve la cookie y el login se queda en un bucle sin
+   ningún mensaje de error.
+
+Conviene además ponerle un `MAX_UPLOAD_MB` y un `USER_QUOTA_MB`. Sigue sin haber
+2FA.
 
 ## 🤝 Contribuciones 🤝
 ---
@@ -143,9 +254,10 @@ mejora:
 
 1. 🍴 Haz un fork del repositorio.
 2. 🌿 Crea una rama para tu cambio (`git checkout -b mejora/nueva-funcion`).
-3. 💾 Haz commit de tus cambios (`git commit -m "Añade nueva función"`).
-4. 🚀 Sube la rama (`git push origin mejora/nueva-funcion`).
-5. 📬 Abre un Pull Request explicando qué cambia y por qué.
+3. ✅ Pasa los tests (`pip install -r requirements-dev.txt && python -m pytest`).
+4. 💾 Haz commit de tus cambios (`git commit -m "Añade nueva función"`).
+5. 🚀 Sube la rama (`git push origin mejora/nueva-funcion`).
+6. 📬 Abre un Pull Request explicando qué cambia y por qué.
 
 Para errores o ideas sueltas, abrir un *issue* también vale.
 

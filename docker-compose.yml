@@ -1,25 +1,57 @@
 services:
   file-server:
     build: .
+    # Sin "image:" cada build deja la imagen anterior sin nombre, así que volver
+    # a la versión de antes obliga a reconstruir desde el código anterior: varios
+    # minutos, y con la base de datos ya migrada. Etiquetando cada versión, la
+    # vuelta atrás es levantar de nuevo una imagen que ya existe.
+    image: "httpwebserver:${APP_VERSION:-dev}"
     container_name: ftp-web
     restart: unless-stopped
-    # Mapeo explícito host:contenedor. PORT se lee de config.ini y se
-    # exporta automáticamente al llamar a ./docker-up.sh (en vez de
-    # "docker compose up" directo), así que config.ini sigue siendo la
-    # única fuente de verdad del puerto. El "8000" de aquí es solo el
-    # valor por defecto si alguna vez se lanza sin el script.
+    # Mapeo explícito host:contenedor. PORT se lee de .env (y si no, de
+    # config.ini) y se exporta automáticamente al llamar a ./docker-up.sh o
+    # ./docker-update.sh, en vez de "docker compose up" directo. El "8000" de
+    # aquí es solo el valor por defecto si alguna vez se lanza sin el script.
     ports:
       - "${PORT:-8000}:${PORT:-8000}"
-    # SECRET_KEY (y cualquier otro secreto futuro) vive en .env, nunca
-    # suelto aquí. Si falta la variable, app.py genera una igualmente y
-    # la persiste en /data/secret_key, pero definirla en .env es lo
-    # recomendado para controlar tú la clave real de firma de sesión.
+    # SECRET_KEY (y cualquier otro secreto) vive en .env, nunca suelto aquí. Si
+    # falta la variable, app.py genera una igualmente y la persiste en
+    # /data/secret_key, pero definirla en .env es lo recomendado para controlar
+    # tú la clave real de firma de sesión.
     env_file:
       - .env
+    environment:
+      # Las IPs de este servidor en la LAN. Desde dentro del contenedor no se
+      # pueden averiguar —solo se ve la IP del puente de Docker, 172.x— y son
+      # justo las que tiene que cubrir el certificado HTTPS. Las exportan
+      # docker-up.sh y docker-update.sh.
+      - HOST_LAN_IPS=${HOST_LAN_IPS:-}
+    healthcheck:
+      # Mismo endpoint que usa docker-update.sh. El script prueba https y http,
+      # porque el esquema depende de si el HTTPS está activado. Con
+      # "restart: unless-stopped", esto hace que un contenedor arriba pero roto
+      # aparezca como unhealthy en "docker compose ps" en vez de aparentar que
+      # todo va bien.
+      test: ["CMD", "python", "/app/healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    # El driver json-file por defecto no rota nada: se registra cada petición,
+    # así que el fichero de log crece sin tope hasta llenar el disco del host.
+    # Se descubre meses después y con el servidor ya parado.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     volumes:
+      # Contiene uploads, app.db, secret_key y tls/ (los certificados y la
+      # clave de la CA). Es lo único que hay que respaldar.
       - ftp_data:/data
-      # Monta config.ini para poder cambiar el puerto sin reconstruir la
-      # imagen (basta con "docker compose restart" tras editarlo).
+      # Monta config.ini para poder cambiar los valores de fábrica sin
+      # reconstruir la imagen. Para configurar una instalación concreta usa
+      # .env, que además no se versiona.
       - ./config.ini:/app/config.ini:ro
 
 volumes:

@@ -531,3 +531,14 @@ section + section { margin-top: 2.5rem; }
   color: var(--text);
   font-weight: 600;
 }
+
+/* Sustituyen a los style="display:none" y a los element.style que había en las
+   plantillas. Con la CSP en "style-src 'self'" el navegador ignora los estilos
+   en línea, así que lo que se muestra u oculta tiene que ser una clase. */
+.hidden {
+  display: none !important;
+}
+
+.preview-media {
+  width: 100%;
+}

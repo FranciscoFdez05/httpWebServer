@@ -4,12 +4,14 @@ import logging
 import mimetypes
 import os
 import secrets
+import shutil
 import socket
 import sqlite3
 import sys
+import tempfile
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from flask import (
     Flask, request, redirect, url_for, render_template,
@@ -20,11 +22,20 @@ from flask_login import (
     login_required, current_user
 )
 from flask_wtf import CSRFProtect
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
+
+import tls
+
+# Versión del código. Es la única fuente: docker-update.sh la lee de aquí
+# para etiquetar la imagen que construye (porfolio de imágenes etiquetadas =
+# poder volver atrás en segundos) y /api/health la devuelve para saber qué
+# versión está realmente en marcha, no cuál crees que desplegaste.
+__version__ = "1.0.0"
 
 # Explicit allowlist of MIME types that are safe to render inline (never
 # includes text/html, xml, or svg, which could execute script if previewed
@@ -46,16 +57,6 @@ DATA_DIR = os.environ.get("DATA_DIR", DEFAULT_DATA_DIR)
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 DB_PATH = os.path.join(DATA_DIR, "app.db")
 
-# Fuente única del puerto: config.ini. Tanto waitress (más abajo) como el
-# CMD de gunicorn en el Dockerfile lo leen de aquí, para no tener el puerto
-# repetido y desincronizado en varios sitios.
-CONFIG_PATH = os.path.join(BASE_DIR, "config.ini")
-_config = configparser.ConfigParser()
-_config.read(CONFIG_PATH)
-SERVER_PORT = _config.getint("server", "port", fallback=8000)
-
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
 # Sin esto no se ve absolutamente nada por consola: waitress anuncia el
 # "Serving on ..." con logging.info, y sin handlers configurados Python solo
 # deja pasar WARNING o superior. Va a stdout para que "docker logs" lo recoja
@@ -67,6 +68,88 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 log = logging.getLogger("ftp-server")
+
+# config.ini son los valores de fábrica: viaja con el código y se actualiza con
+# él, así que editarlo en el servidor choca con cada git pull. El entorno (.env,
+# que no se versiona) manda sobre él, y es ahí donde se configura una
+# instalación concreta. Todos los ajustes de abajo siguen esa misma regla.
+CONFIG_PATH = os.path.join(BASE_DIR, "config.ini")
+_config = configparser.ConfigParser()
+_config.read(CONFIG_PATH)
+
+
+def ajuste(seccion, clave, env, defecto):
+    valor = os.environ.get(env, "").strip()
+    if valor:
+        return valor
+    return _config.get(seccion, clave, fallback=str(defecto))
+
+
+def ajuste_int(seccion, clave, env, defecto):
+    valor = ajuste(seccion, clave, env, defecto)
+    try:
+        return int(str(valor).strip())
+    except (TypeError, ValueError):
+        log.warning("Valor no numérico para %s (%s); se usa %s", env, valor, defecto)
+        return defecto
+
+
+def ajuste_bool(seccion, clave, env, defecto):
+    valor = str(ajuste(seccion, clave, env, defecto)).strip().lower()
+    if valor in ("1", "true", "yes", "on", "si", "sí"):
+        return True
+    if valor in ("0", "false", "no", "off"):
+        return False
+    return bool(defecto)
+
+
+SERVER_PORT = ajuste_int("server", "port", "PORT", 8000)
+
+# ── Límites de subida ─────────────────────────────────────────────────────────
+# 0 = sin límite en los dos primeros, que es el comportamiento histórico y sigue
+# siendo razonable en una LAN de confianza. Lo que NO es opcional es la reserva
+# de disco: sin ella cualquier usuario autenticado podía llenar el volumen hasta
+# que la base de datos dejaba de poder escribir, y con ella el servicio sigue
+# funcionando aunque alguien se pase subiendo.
+MAX_UPLOAD_MB = ajuste_int("server", "max_upload_mb", "MAX_UPLOAD_MB", 0)
+USER_QUOTA_MB = ajuste_int("server", "user_quota_mb", "USER_QUOTA_MB", 0)
+MIN_FREE_DISK_MB = ajuste_int("server", "min_free_disk_mb", "MIN_FREE_DISK_MB", 1024)
+
+# ── Seguridad ─────────────────────────────────────────────────────────────────
+# behind_proxy activa dos cosas que solo son correctas detrás de un proxy con
+# TLS: leer las cabeceras X-Forwarded-* (si no, el log y el bloqueo por intentos
+# verían siempre la IP del proxy, y el bloqueo sería inútil) y marcar las
+# cookies como Secure. Ponerlo a true sin proxy rompe el login; dejarlo a false
+# detrás de uno deja las cookies viajando sin la marca Secure.
+BEHIND_PROXY = ajuste_bool("security", "behind_proxy", "BEHIND_PROXY", False)
+
+# HTTPS propio: el servidor sirve TLS él mismo con un certificado firmado por
+# una CA local, sin proxy delante. Desactivado hasta que se active desde
+# Administración → HTTPS, porque activarlo sin haber instalado antes la CA en
+# los dispositivos deja a todo el mundo con un aviso rojo.
+#
+# El estado NO vive en config.ini ni en .env: ninguno de los dos se puede
+# escribir desde dentro del contenedor. Vive en el volumen de datos, junto a
+# los propios certificados, que es lo que también mira docker-entrypoint.sh
+# para decidir si arrancar gunicorn con TLS.
+HTTPS_ACTIVO = tls.esta_activo(DATA_DIR)
+
+_secure_cookies = str(ajuste("security", "secure_cookies", "SECURE_COOKIES", "auto")).lower()
+SECURE_COOKIES = (
+    (BEHIND_PROXY or HTTPS_ACTIVO) if _secure_cookies == "auto"
+    else _secure_cookies in ("1", "true", "yes", "on", "si", "sí")
+)
+
+MIN_PASSWORD_LENGTH = ajuste_int("security", "min_password_length", "MIN_PASSWORD_LENGTH", 12)
+LOGIN_MAX_ATTEMPTS = ajuste_int("security", "login_max_attempts", "LOGIN_MAX_ATTEMPTS", 10)
+LOGIN_WINDOW_MINUTES = ajuste_int("security", "login_window_minutes", "LOGIN_WINDOW_MINUTES", 15)
+
+# Segundos que una petición espera a que se libere la base de datos antes de
+# rendirse. Con subidas grandes y varios workers, 5 s (el valor por defecto de
+# sqlite3) se queda corto.
+DB_TIMEOUT_S = ajuste_int("server", "db_timeout_seconds", "DB_TIMEOUT_SECONDS", 30)
+
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__)
 _secret_key = os.environ.get("SECRET_KEY")
@@ -82,12 +165,46 @@ if not _secret_key:
         with open(_secret_key_path, "w") as f:
             f.write(_secret_key)
 app.secret_key = _secret_key
-app.config["MAX_CONTENT_LENGTH"] = None  # sin límite de tamaño de subida
+
+# Detrás de un proxy con TLS, sin esto request.remote_addr sería siempre la IP
+# del proxy: el log de acceso no distinguiría a nadie y el bloqueo por intentos
+# fallidos contaría todos los intentos del mundo en el mismo cubo, con lo que o
+# no bloquea nunca o bloquea a todos a la vez. x_for=1 porque se confía en UN
+# salto: el proxy propio, que reescribe la cabecera.
+if BEHIND_PROXY:
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024 if MAX_UPLOAD_MB > 0 else None
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 app.config["REMEMBER_COOKIE_DURATION"] = timedelta(days=30)
+# La cookie de sesión y la de "recuérdame" no las necesita nunca JavaScript, y
+# SameSite=Lax evita que un sitio de terceros dispare peticiones autenticadas.
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["REMEMBER_COOKIE_HTTPONLY"] = True
+app.config["REMEMBER_COOKIE_SAMESITE"] = "Lax"
+# Secure impide que el navegador mande la cookie por HTTP en claro. Solo se
+# puede activar si hay TLS delante: sobre HTTP pelado el navegador nunca
+# devolvería la cookie y el login quedaría en un bucle sin explicación. De ahí
+# que el valor por defecto sea "auto" = lo mismo que behind_proxy.
+app.config["SESSION_COOKIE_SECURE"] = SECURE_COOKIES
+app.config["REMEMBER_COOKIE_SECURE"] = SECURE_COOKIES
+
+if not SECURE_COOKIES:
+    log.warning(
+        "Cookies SIN marca Secure: la sesión y la contraseña viajan en claro. "
+        "Correcto solo en una LAN de confianza. Para cifrarlo: activa el HTTPS "
+        "desde Administración → HTTPS (certificado propio, sin salir de la LAN), "
+        "o pon un proxy con TLS delante y BEHIND_PROXY=true en .env."
+    )
 
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
+# "basic" (por defecto) y no "strong": en LAN la IP del cliente cambia al
+# saltar de wifi a cable y "strong" cerraría la sesión en cada cambio.
+login_manager.session_protection = "basic"
+login_manager.login_message = "Debes iniciar sesión para acceder a esta página."
+login_manager.login_message_category = "error"
 csrf = CSRFProtect(app)
 
 
@@ -95,6 +212,79 @@ csrf = CSRFProtect(app)
 def make_session_permanent():
     session.permanent = True
     g.request_started_at = time.monotonic()
+
+
+@app.after_request
+def no_store_html(response):
+    # Sin esto el navegador guarda el HTML (y su bfcache) y el botón "atrás"
+    # desde el menú principal vuelve a pintar el login ya usado. Solo afecta a
+    # las páginas; descargas y vistas previas siguen siendo cacheables.
+    if response.mimetype == "text/html":
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
+# Las plantillas no llevan ni un solo <script> en línea ni un onclick: todo el
+# JavaScript vive en static/app.js. Eso permite prohibir el script en línea sin
+# 'unsafe-inline', que es lo único que convierte a la CSP en una defensa real
+# contra XSS en vez de en un adorno.
+CSP_PAGINAS = (
+    "default-src 'self'; "
+    "script-src 'self'; "
+    "style-src 'self'; "
+    "img-src 'self' data:; "
+    "media-src 'self'; "
+    "object-src 'self'; "      # el <embed> del visor de PDF
+    "frame-src 'self'; "       # el <iframe> de la vista previa de texto
+    "base-uri 'none'; "
+    "form-action 'self'; "
+    "frame-ancestors 'self'"
+)
+
+# Los ficheros que sirven /download y /preview son contenido subido por
+# usuarios. Aquí la respuesta ES el fichero, así que se le prohíbe cargar
+# absolutamente nada: si algún día se cuela un tipo previsualizable capaz de
+# ejecutar algo, no tendrá con qué llamar a casa.
+CSP_FICHEROS = (
+    "default-src 'none'; "
+    "img-src 'self'; "
+    "media-src 'self'; "
+    "style-src 'unsafe-inline'; "
+    "frame-ancestors 'self'"
+)
+
+
+@app.after_request
+def security_headers(response):
+    response.headers.setdefault("Content-Security-Policy", CSP_PAGINAS)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    # El servidor no se embebe en sitios de terceros; frame-ancestors ya lo dice
+    # para navegadores modernos y X-Frame-Options cubre a los que no.
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    # Sin esto, al pinchar el enlace del pie se filtraría la URL interna del
+    # servidor (y con ella el nombre del fichero) al sitio de destino.
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault(
+        "Permissions-Policy", "geolocation=(), microphone=(), camera=(), interest-cohort=()"
+    )
+    if SECURE_COOKIES:
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    return response
+
+
+@app.errorhandler(413)
+def upload_demasiado_grande(error):
+    # Sin este manejador, pasarse del límite devuelve la página de error cruda
+    # de Werkzeug a mitad de subida y el usuario no llega a saber por qué.
+    flash(
+        f"El archivo supera el límite de subida ({MAX_UPLOAD_MB} MB por petición).",
+        "error",
+    )
+    return redirect(url_for("upload" if current_user.is_authenticated else "index")), 413
 
 
 @app.after_request
@@ -118,11 +308,27 @@ def log_request(response):
     return response
 
 
+def conectar(ruta):
+    """Conexión con los PRAGMA que hacen falta para servir con varios workers.
+
+    En modo journal clásico un escritor bloquea a TODOS los lectores, así que
+    con los 2 workers de gunicorn bastaba una subida en curso para que otra
+    petición muriera con «database is locked». WAL deja que lectores y escritor
+    convivan, y busy_timeout convierte el choque entre dos escritores en una
+    espera corta en vez de un error inmediato.
+    """
+    conn = sqlite3.connect(ruta, timeout=DB_TIMEOUT_S)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA busy_timeout = %d" % (DB_TIMEOUT_S * 1000))
+    return conn
+
+
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
+        g.db = conectar(DB_PATH)
     return g.db
 
 
@@ -134,8 +340,7 @@ def close_db(exception=None):
 
 
 def init_db():
-    db = sqlite3.connect(DB_PATH)
-    db.row_factory = sqlite3.Row
+    db = conectar(DB_PATH)
     db.executescript(
         """
         CREATE TABLE IF NOT EXISTS users (
@@ -165,6 +370,19 @@ def init_db():
             FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         );
+
+        -- Intentos de login fallidos, para poder frenar la fuerza bruta. Va en
+        -- la base de datos y no en memoria a propósito: con varios workers de
+        -- gunicorn, un contador en memoria cuenta por proceso y el atacante solo
+        -- tiene que repartir los intentos para no llegar nunca al límite.
+        CREATE TABLE IF NOT EXISTS login_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip TEXT NOT NULL,
+            username TEXT NOT NULL DEFAULT '',
+            attempted_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_login_attempts
+            ON login_attempts (ip, attempted_at);
         """
     )
     existing_columns = {row["name"] for row in db.execute("PRAGMA table_info(files)")}
@@ -187,6 +405,125 @@ def init_db():
                 )
     db.commit()
     db.close()
+
+
+def ahora():
+    """Instante actual con zona horaria.
+
+    `datetime.utcnow()` está deprecado en 3.12 y además devolvía un datetime
+    "ingenuo": la cadena guardada no decía en qué huso estaba, así que no había
+    forma de interpretarla sin saberlo de memoria.
+    """
+    return datetime.now(timezone.utc)
+
+
+# No pretende ser una lista exhaustiva —para eso hace falta un diccionario de
+# millones de entradas—, solo cortar lo que aparece en el primer intento de
+# cualquier ataque automatizado.
+CONTRASENAS_COMUNES = {
+    "123456", "123456789", "12345678", "1234567890", "12345", "1234567",
+    "password", "password1", "password123", "qwerty", "qwerty123", "abc123",
+    "111111", "000000", "iloveyou", "admin", "administrador", "administrator",
+    "letmein", "welcome", "monkey", "dragon", "sunshine", "princess",
+    "contrasena", "contraseña", "contrasena1", "1q2w3e4r", "qwertyuiop",
+    "servidor", "usuario", "root", "toor", "test", "invitado", "guest",
+    "asdasd", "asdfgh", "zxcvbnm", "666666", "654321", "123123", "888888",
+    "barcelona", "realmadrid", "cambiame", "changeme",
+}
+
+
+def validar_password(password, username=""):
+    """Devuelve el motivo del rechazo, o None si la contraseña es aceptable."""
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return f"La contraseña debe tener al menos {MIN_PASSWORD_LENGTH} caracteres."
+    if password.lower() in CONTRASENAS_COMUNES:
+        return "Esa contraseña es de las primeras que prueba cualquier ataque. Elige otra."
+    if username and password.lower() == username.lower():
+        return "La contraseña no puede ser igual al nombre de usuario."
+    if len(set(password)) < 5:
+        return "La contraseña repite demasiado los mismos caracteres."
+    return None
+
+
+def ip_cliente():
+    return request.remote_addr or "desconocida"
+
+
+def segundos_de_bloqueo(ip):
+    """Segundos que faltan para que esta IP pueda volver a intentarlo, o 0.
+
+    Se cuenta por IP y no por usuario a propósito: bloquear por nombre de
+    usuario deja que cualquiera deje fuera a otra persona sin más que fallar su
+    contraseña unas cuantas veces.
+    """
+    db = get_db()
+    limite = (ahora() - timedelta(minutes=LOGIN_WINDOW_MINUTES)).isoformat()
+    # Los intentos fuera de la ventana ya no cuentan para nada: se borran aquí
+    # y así la tabla no crece sin fin sin necesidad de una tarea aparte.
+    db.execute("DELETE FROM login_attempts WHERE attempted_at < ?", (limite,))
+    db.commit()
+    filas = db.execute(
+        "SELECT attempted_at FROM login_attempts WHERE ip = ? ORDER BY attempted_at",
+        (ip,),
+    ).fetchall()
+    if len(filas) < LOGIN_MAX_ATTEMPTS:
+        return 0
+    # El bloqueo se levanta cuando el intento más antiguo salga de la ventana.
+    try:
+        mas_antiguo = datetime.fromisoformat(filas[0]["attempted_at"])
+    except ValueError:
+        return 0
+    libre_en = mas_antiguo + timedelta(minutes=LOGIN_WINDOW_MINUTES)
+    return max(0, int((libre_en - ahora()).total_seconds()))
+
+
+def registrar_intento_fallido(ip, username):
+    db = get_db()
+    db.execute(
+        "INSERT INTO login_attempts (ip, username, attempted_at) VALUES (?, ?, ?)",
+        (ip, username[:150], ahora().isoformat()),
+    )
+    db.commit()
+
+
+def limpiar_intentos(ip):
+    db = get_db()
+    db.execute("DELETE FROM login_attempts WHERE ip = ?", (ip,))
+    db.commit()
+
+
+def espacio_libre_mb():
+    """MB libres en el volumen de subidas, o None si no se puede saber."""
+    try:
+        return shutil.disk_usage(UPLOAD_DIR).free // (1024 * 1024)
+    except OSError:
+        return None
+
+
+def uso_del_usuario_mb(user_id):
+    fila = get_db().execute(
+        "SELECT COALESCE(SUM(size_bytes), 0) AS total FROM files WHERE uploader_id = ?",
+        (user_id,),
+    ).fetchone()
+    return fila["total"] / (1024 * 1024)
+
+
+def borrar_de_disco(stored_name):
+    """Borra un fichero subido sin reventar si ya no está.
+
+    Que falte no es un error: puede haberse borrado a mano, o haber fallado una
+    subida a medias. Lo que sí importa es que un fallo aquí no deje la petición
+    a medio hacer cuando la fila ya se ha borrado de la base de datos.
+    """
+    ruta = os.path.join(UPLOAD_DIR, stored_name)
+    try:
+        os.remove(ruta)
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        log.warning("No se pudo borrar %s: %s", ruta, exc)
+        return False
 
 
 def human_size(num_bytes):
@@ -214,7 +551,7 @@ def admin_exists():
 
 @app.before_request
 def require_initial_setup():
-    if request.endpoint in ("setup", "static"):
+    if request.endpoint in ("setup", "static", "health", "descargar_ca"):
         return
     if not admin_exists():
         return redirect(url_for("setup"))
@@ -228,22 +565,27 @@ def setup():
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
         confirm_password = request.form.get("confirm_password", "")
+        motivo = validar_password(password, username)
         if not username:
             flash("Debes indicar un nombre de usuario.", "error")
-        elif len(password) < 6:
-            flash("La contraseña debe tener al menos 6 caracteres.", "error")
+        elif motivo:
+            flash(motivo, "error")
         elif password != confirm_password:
             flash("Las contraseñas no coinciden.", "error")
         else:
             db = get_db()
-            db.execute(
+            cur = db.execute(
                 "INSERT INTO users (username, password_hash, is_admin, must_change_password) "
                 "VALUES (?, ?, 1, 0)",
                 (username, generate_password_hash(password)),
             )
             db.commit()
-            flash("Cuenta de administrador creada. Ya puedes iniciar sesión.", "success")
-            return redirect(url_for("login"))
+            # Quien acaba de teclear la contraseña no tiene por qué volver a
+            # escribirla: se entra directamente con la cuenta recién creada.
+            row = db.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone()
+            login_user(User(row), remember=True)
+            flash("Cuenta de administrador creada. Sesión iniciada.", "success")
+            return redirect(url_for("index"))
     return render_template("setup.html")
 
 
@@ -320,6 +662,7 @@ def template_helpers():
         human_size=human_size,
         is_previewable=is_previewable,
         supports_metadata_removal=supports_metadata_removal,
+        min_password_length=MIN_PASSWORD_LENGTH,
     )
 
 
@@ -331,16 +674,38 @@ def index():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    if current_user.is_authenticated:
+        # Volver al login con una sesión abierta (típicamente con el botón
+        # "atrás") no debe mostrar el formulario otra vez.
+        return redirect(url_for("index"))
+    ip = ip_cliente()
     if request.method == "POST":
+        # El bloqueo se comprueba antes de tocar la base de datos de usuarios:
+        # así un ataque por fuerza bruta ni siquiera llega a gastar el tiempo de
+        # comprobar el hash, que es la parte cara.
+        espera = segundos_de_bloqueo(ip)
+        if espera > 0:
+            log.warning("Login bloqueado para %s (%d s restantes)", ip, espera)
+            flash(
+                f"Demasiados intentos fallidos. Vuelve a intentarlo en "
+                f"{max(1, espera // 60)} minuto(s).",
+                "error",
+            )
+            return render_template("login.html"), 429
+
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
         db = get_db()
         row = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
         if row and check_password_hash(row["password_hash"], password):
+            limpiar_intentos(ip)
             login_user(User(row), remember=True)
             if row["must_change_password"]:
                 return redirect(url_for("change_password"))
             return redirect(url_for("index"))
+        registrar_intento_fallido(ip, username)
+        # El mismo mensaje tanto si el usuario no existe como si la contraseña
+        # falla: distinguirlos le diría a un atacante qué nombres son válidos.
         flash("Usuario o contraseña incorrectos.", "error")
     return render_template("login.html")
 
@@ -361,12 +726,15 @@ def change_password():
         confirm_password = request.form.get("confirm_password", "")
         db = get_db()
         row = db.execute("SELECT * FROM users WHERE id = ?", (current_user.id,)).fetchone()
+        motivo = validar_password(new_password, current_user.username)
         if not check_password_hash(row["password_hash"], current_password):
             flash("La contraseña actual no es correcta.", "error")
-        elif len(new_password) < 6:
-            flash("La nueva contraseña debe tener al menos 6 caracteres.", "error")
+        elif motivo:
+            flash(motivo, "error")
         elif new_password != confirm_password:
             flash("Las contraseñas nuevas no coinciden.", "error")
+        elif new_password == current_password:
+            flash("La nueva contraseña debe ser distinta de la actual.", "error")
         else:
             db.execute(
                 "UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?",
@@ -391,9 +759,22 @@ def upload():
             flash("Debes seleccionar al menos un archivo.", "error")
             return redirect(url_for("upload"))
 
+        # Antes de aceptar nada: si el disco ya está al límite, mejor decirlo
+        # que empezar a escribir y dejar el volumen sin sitio ni para que la
+        # base de datos pueda registrar lo que acaba de pasar.
+        libre = espacio_libre_mb()
+        if libre is not None and libre <= MIN_FREE_DISK_MB:
+            log.error("Subida rechazada: solo quedan %s MB libres", libre)
+            flash(
+                "No hay espacio suficiente en el servidor. Avisa al administrador.",
+                "error",
+            )
+            return redirect(url_for("upload"))
+
         visibility = "public" if visibility_choice == "public" else "private"
-        uploaded_at = datetime.utcnow().isoformat()
+        uploaded_at = ahora().isoformat()
         count = 0
+        interrumpido = None
 
         for uploaded_file in uploaded_files:
             original_name = secure_filename(uploaded_file.filename)
@@ -403,6 +784,30 @@ def upload():
             dest_path = os.path.join(UPLOAD_DIR, stored_name)
             uploaded_file.save(dest_path)
             size_bytes = os.path.getsize(dest_path)
+
+            # El tamaño real solo se conoce cuando el fichero ya está escrito
+            # (el navegador no lo anuncia de forma fiable), así que la cuota y
+            # la reserva de disco se comprueban aquí y se deshace lo escrito si
+            # se han pasado. Deshacerlo es lo que evita que un rechazo deje
+            # basura ocupando sitio.
+            libre = espacio_libre_mb()
+            if libre is not None and libre <= MIN_FREE_DISK_MB:
+                borrar_de_disco(stored_name)
+                interrumpido = (
+                    f"«{original_name}» no cabe: el servidor debe mantener "
+                    f"{MIN_FREE_DISK_MB} MB libres."
+                )
+                break
+
+            if USER_QUOTA_MB > 0:
+                usado = uso_del_usuario_mb(current_user.id) + size_bytes / (1024 * 1024)
+                if usado > USER_QUOTA_MB:
+                    borrar_de_disco(stored_name)
+                    interrumpido = (
+                        f"«{original_name}» supera tu cuota de {USER_QUOTA_MB} MB. "
+                        "Borra algún archivo antes de subir más."
+                    )
+                    break
             # Never trust the client-supplied Content-Type for the stored mime_type:
             # it drives what gets rendered inline in the browser (see is_previewable),
             # so it must be derived server-side from the filename instead.
@@ -424,6 +829,15 @@ def upload():
                             (file_id, int(uid)),
                         )
         db.commit()
+        if interrumpido:
+            # Lo ya guardado se queda: rehacer una subida entera porque el
+            # último fichero no cabía sería peor que decir exactamente dónde se
+            # cortó.
+            if count:
+                flash(f"Se subieron {count} archivo(s). {interrumpido}", "error")
+            else:
+                flash(interrumpido, "error")
+            return redirect(url_for("index"))
         if count:
             flash(f"{count} archivo(s) subido(s) correctamente.", "success")
         else:
@@ -448,6 +862,7 @@ def download(file_id):
         UPLOAD_DIR, row["stored_name"], as_attachment=True, download_name=row["original_name"]
     )
     response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Content-Security-Policy"] = CSP_FICHEROS
     return response
 
 
@@ -465,6 +880,10 @@ def preview(file_id):
         UPLOAD_DIR, row["stored_name"], as_attachment=False, mimetype=row["mime_type"]
     )
     response.headers["X-Content-Type-Options"] = "nosniff"
+    # La CSP de las páginas dejaría que este contenido —subido por un usuario—
+    # cargara recursos del propio origen. Aquí la respuesta ES el fichero, así
+    # que no necesita cargar nada.
+    response.headers["Content-Security-Policy"] = CSP_FICHEROS
     return response
 
 
@@ -539,28 +958,51 @@ def strip_metadata(file_id):
     file_path = os.path.join(UPLOAD_DIR, row["stored_name"])
     ext = os.path.splitext(row["original_name"])[1].lower()
 
+    if ext not in IMAGE_EXTENSIONS and row["mime_type"] != "application/pdf":
+        flash("Este tipo de archivo no soporta eliminación de metadatos.", "error")
+        return redirect(url_for("index"))
+
+    # Se escribe en un temporal del MISMO directorio y solo al final se sustituye
+    # el original con os.replace, que es atómico. Antes se reescribía el fichero
+    # en el sitio: si Pillow o pypdf fallaban a media escritura —un JPEG con el
+    # final truncado, un PDF cifrado—, el archivo del usuario quedaba destruido
+    # y el mensaje de error llegaba cuando ya no había nada que salvar.
+    # Mismo directorio porque os.replace solo es atómico dentro de un sistema de
+    # ficheros, y /tmp puede estar en otro.
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=UPLOAD_DIR, prefix=".limpiando_")
+    os.close(tmp_fd)
     try:
         if ext in IMAGE_EXTENSIONS:
-            image = Image.open(file_path)
-            data = list(image.getdata())
-            clean_image = Image.new(image.mode, image.size)
-            if image.mode == "P":
-                clean_image.putpalette(image.getpalette())
-            clean_image.putdata(data)
-            clean_image.save(file_path)
-        elif row["mime_type"] == "application/pdf":
+            with Image.open(file_path) as image:
+                formato = image.format
+                data = list(image.getdata())
+                clean_image = Image.new(image.mode, image.size)
+                if image.mode == "P":
+                    clean_image.putpalette(image.getpalette())
+                clean_image.putdata(data)
+                # Sin format explícito, Pillow lo deduce de la extensión del
+                # destino, y el temporal no tiene ninguna.
+                clean_image.save(tmp_path, format=formato)
+        else:
             reader = PdfReader(file_path)
             writer = PdfWriter()
             for page in reader.pages:
                 writer.add_page(page)
             writer.add_metadata({})
-            with open(file_path, "wb") as f:
+            with open(tmp_path, "wb") as f:
                 writer.write(f)
-        else:
-            flash("Este tipo de archivo no soporta eliminación de metadatos.", "error")
-            return redirect(url_for("index"))
-    except Exception:
-        flash("No se pudieron eliminar los metadatos de este archivo.", "error")
+        os.replace(tmp_path, file_path)
+    except Exception as exc:
+        log.warning("Fallo al limpiar metadatos de %s: %s", row["stored_name"], exc)
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        flash(
+            "No se pudieron eliminar los metadatos de este archivo. "
+            "El original no se ha modificado.",
+            "error",
+        )
         return redirect(url_for("index"))
 
     new_size = os.path.getsize(file_path)
@@ -581,9 +1023,7 @@ def delete_file(file_id):
         abort(404)
     db.execute("DELETE FROM files WHERE id = ?", (file_id,))
     db.commit()
-    file_path = os.path.join(UPLOAD_DIR, row["stored_name"])
-    if os.path.exists(file_path):
-        os.remove(file_path)
+    borrar_de_disco(row["stored_name"])
     flash("Archivo eliminado.", "success")
     return redirect(url_for("index"))
 
@@ -599,8 +1039,11 @@ def admin():
         if action == "create_user":
             username = request.form.get("username", "").strip()
             password = request.form.get("password", "")
-            if not username or len(password) < 6:
-                flash("Nombre de usuario o contraseña inválidos (mínimo 6 caracteres).", "error")
+            motivo = validar_password(password, username)
+            if not username:
+                flash("Debes indicar un nombre de usuario.", "error")
+            elif motivo:
+                flash(motivo, "error")
             else:
                 try:
                     db.execute(
@@ -620,12 +1063,13 @@ def admin():
                 target = db.execute(
                     "SELECT * FROM users WHERE id = ?", (int(user_id),)
                 ).fetchone()
+            motivo = validar_password(new_password, target["username"] if target else "")
             if not target:
                 flash("Usuario no encontrado.", "error")
             elif target["id"] == current_user.id:
                 flash("Para cambiar tu propia contraseña usa 'Cambiar contraseña'.", "error")
-            elif len(new_password) < 6:
-                flash("La contraseña debe tener al menos 6 caracteres.", "error")
+            elif motivo:
+                flash(motivo, "error")
             else:
                 db.execute(
                     "UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?",
@@ -638,15 +1082,182 @@ def admin():
                     "success",
                 )
         elif action == "delete_user":
-            user_id = request.form.get("user_id")
-            if user_id and int(user_id) != current_user.id:
-                db.execute("DELETE FROM users WHERE id = ? AND is_admin = 0", (user_id,))
+            # `int(user_id)` a pelo daba un 500 con cualquier valor no numérico;
+            # el resto de acciones ya usaban isdigit().
+            user_id = request.form.get("user_id", "")
+            if not user_id.isdigit():
+                flash("Usuario no encontrado.", "error")
+            elif int(user_id) == current_user.id:
+                flash("No puedes eliminar tu propia cuenta.", "error")
+            else:
+                # Los ficheros del usuario se borran del disco a mano: el ON
+                # DELETE CASCADE se lleva las filas de `files`, pero deja los
+                # archivos en /data/uploads ocupando sitio para siempre y sin
+                # ninguna fila que los mencione, así que nadie los encuentra ya.
+                # Se leen ANTES de borrar, que es cuando todavía se sabe cuáles
+                # son.
+                huerfanos = [
+                    r["stored_name"]
+                    for r in db.execute(
+                        "SELECT stored_name FROM files WHERE uploader_id = ?",
+                        (int(user_id),),
+                    )
+                ]
+                cur = db.execute(
+                    "DELETE FROM users WHERE id = ? AND is_admin = 0", (int(user_id),)
+                )
                 db.commit()
-                flash("Usuario eliminado.", "success")
+                if cur.rowcount:
+                    borrados = sum(1 for n in huerfanos if borrar_de_disco(n))
+                    log.info(
+                        "Usuario %s eliminado; %d de %d archivos borrados del disco",
+                        user_id, borrados, len(huerfanos),
+                    )
+                    flash(
+                        f"Usuario eliminado junto con {len(huerfanos)} archivo(s).",
+                        "success",
+                    )
+                else:
+                    flash("No se puede eliminar a un administrador.", "error")
         return redirect(url_for("admin"))
 
     users = db.execute("SELECT * FROM users ORDER BY is_admin DESC, username").fetchall()
     return render_template("admin.html", users=users)
+
+
+@app.route("/api/health")
+def health():
+    """Comprobación de despliegue: "el contenedor está arriba" no es lo mismo
+    que "la aplicación funciona". Por eso consulta de verdad la base de datos y
+    el directorio de subidas, que es lo que se rompe al actualizar (volumen mal
+    montado, permisos del volumen a nombre de otro usuario, esquema a medias).
+    Devuelve 503 si algo falla, para que docker-update.sh pueda distinguirlo.
+    """
+    checks = {}
+    ok = True
+
+    try:
+        get_db().execute("SELECT COUNT(*) FROM users").fetchone()
+        checks["database"] = "ok"
+    except Exception as exc:
+        checks["database"] = f"error: {exc.__class__.__name__}"
+        ok = False
+
+    # El fallo clásico tras actualizar: el volumen existe pero el proceso ya no
+    # puede escribir en él, y no se nota hasta que alguien intenta subir algo.
+    if os.path.isdir(UPLOAD_DIR) and os.access(UPLOAD_DIR, os.W_OK):
+        checks["uploads"] = "ok"
+    else:
+        checks["uploads"] = "error: no se puede escribir"
+        ok = False
+
+    payload = {
+        "status": "ok" if ok else "error",
+        "version": __version__,
+        # docker-update.sh lo consulta para saber si sondear por http o https:
+        # con TLS activo, una comprobación en http no obtiene respuesta y daría
+        # por muerta una versión que funciona.
+        "https": HTTPS_ACTIVO,
+        "checks": checks,
+    }
+    return jsonify(payload), (200 if ok else 503)
+
+
+@app.route("/ca.crt")
+def descargar_ca():
+    """El certificado de la CA, para instalarlo en el PC y en el móvil.
+
+    Es público a propósito, sin sesión: es la única forma de que un dispositivo
+    nuevo pueda confiar en el servidor. No hay nada que proteger — un
+    certificado de CA es la parte pública, y el servidor lo manda entero en
+    cada handshake TLS. Lo que jamás se sirve es ca.key, que está en el mismo
+    directorio y es lo que permitiría suplantar al servidor.
+
+    Se sirve también por HTTPS aunque el navegador todavía no confíe: en un
+    móvil nuevo se acepta el aviso una vez, se instala la CA, y a partir de ahí
+    el aviso desaparece para siempre.
+    """
+    if not tls.estado(DATA_DIR)["hay_ca"]:
+        abort(404)
+    respuesta = app.response_class(
+        tls.leer_ca_pem(DATA_DIR),
+        # Este tipo MIME es lo que hace que Android ofrezca instalarlo como
+        # certificado y que Safari lo trate como perfil de configuración. Con
+        # application/octet-stream se descarga como un fichero cualquiera y el
+        # usuario se queda sin saber qué hacer con él.
+        mimetype="application/x-x509-ca-cert",
+    )
+    # inline y no attachment: attachment hace que Safari lo guarde en Archivos
+    # en vez de ofrecer la instalación del perfil.
+    respuesta.headers["Content-Disposition"] = 'inline; filename="servidor-archivos-ca.crt"'
+    respuesta.headers["Cache-Control"] = "no-store"
+    return respuesta
+
+
+@app.route("/admin/https", methods=["GET", "POST"])
+@login_required
+def admin_https():
+    if not current_user.is_admin:
+        abort(403)
+
+    if request.method == "POST":
+        accion = request.form.get("accion")
+        # Los nombres que tendrá que cubrir el certificado. El que de verdad
+        # importa se conoce sin preguntar: la dirección por la que el propio
+        # administrador ha llegado hasta aquí, que por definición funciona.
+        # Dentro del contenedor no hay forma de averiguarla (solo se ve la IP
+        # del puente de Docker), así que este es el único dato fiable.
+        nombres = [request.host]
+        nombres += request.form.get("nombres", "").replace(",", " ").split()
+
+        try:
+            if accion == "activar":
+                estado = tls.activar(DATA_DIR, nombres)
+                log.info("HTTPS activado; el certificado cubre %s", estado["nombres"])
+                flash(
+                    "HTTPS preparado. Descarga el certificado, instálalo en tus "
+                    "dispositivos y reinicia el servidor para que empiece a usarse.",
+                    "success",
+                )
+            elif accion == "regenerar":
+                # Con la MISMA CA: los dispositivos que ya la tienen instalada
+                # siguen confiando, así que no hay que volver a tocarlos. Es lo
+                # que se usa cuando cambia la IP del servidor.
+                tls.generar_certificado_servidor(DATA_DIR, nombres)
+                flash(
+                    "Certificado regenerado con la misma CA: no hace falta "
+                    "reinstalar nada en los dispositivos. Reinicia el servidor.",
+                    "success",
+                )
+            elif accion == "desactivar":
+                tls.desactivar(DATA_DIR)
+                flash(
+                    "HTTPS desactivado. Reinicia el servidor para volver a HTTP. "
+                    "Los certificados se conservan por si quieres reactivarlo.",
+                    "success",
+                )
+            else:
+                flash("Acción no reconocida.", "error")
+        except Exception as exc:
+            log.exception("Fallo al preparar el HTTPS")
+            flash(f"No se pudo completar la operación: {exc}", "error")
+        return redirect(url_for("admin_https"))
+
+    estado = tls.estado(DATA_DIR)
+    return render_template(
+        "https.html",
+        estado=estado,
+        # Si el certificado no cubre la dirección por la que se está entrando,
+        # el navegador seguirá avisando por mucho que la CA esté instalada. Es
+        # el fallo más desconcertante de todos, así que se detecta y se dice.
+        cubre_esta_direccion=tls.cubre(DATA_DIR, request.host) if estado["hay_certificado"] else False,
+        host_actual=request.host,
+        nombres_sugeridos=" ".join(
+            dict.fromkeys([request.host] + tls.nombres_del_sistema())
+        ),
+        https_en_uso=request.is_secure,
+        activo=HTTPS_ACTIVO,
+    )
 
 
 def lan_ip():

@@ -37,20 +37,33 @@
                 <div class="actions-inner">
                 <a class="btn btn-small" href="{{ url_for('download', file_id=f.id) }}">Descargar</a>
                 {% if is_previewable(f.mime_type) %}
-                  <button type="button" class="btn btn-small" onclick='openPreview({{ f.id }}, {{ f.mime_type|tojson }}, {{ f.original_name|tojson }})'>Vista previa</button>
+                  <button type="button" class="btn btn-small"
+                          data-action="preview"
+                          data-file-id="{{ f.id }}"
+                          data-mime="{{ f.mime_type }}"
+                          data-name="{{ f.original_name }}">Vista previa</button>
                 {% endif %}
-                <button type="button" class="btn btn-small" onclick='openProps({{ f.original_name|tojson }}, {{ f.uploader_name|tojson }}, {{ f.visibility|tojson }}, {{ human_size(f.size_bytes)|tojson }}, {{ f.mime_type|tojson }}, {{ f.uploaded_at[:16].replace("T", " ")|tojson }})'>Propiedades</button>
+                <button type="button" class="btn btn-small"
+                        data-action="props"
+                        data-name="{{ f.original_name }}"
+                        data-uploader="{{ f.uploader_name }}"
+                        data-visibility="{{ f.visibility }}"
+                        data-size="{{ human_size(f.size_bytes) }}"
+                        data-mime="{{ f.mime_type }}"
+                        data-date="{{ f.uploaded_at[:16].replace('T', ' ') }}">Propiedades</button>
                 {% if current_user.is_authenticated and (current_user.is_admin or current_user.id == f.uploader_id) %}
                   <a class="btn btn-small" href="{{ url_for('file_permissions', file_id=f.id) }}">Permisos</a>
                 {% endif %}
                 {% if current_user.is_authenticated and (current_user.is_admin or current_user.id == f.uploader_id) and supports_metadata_removal(f.original_name, f.mime_type) %}
-                  <form method="post" action="{{ url_for('strip_metadata', file_id=f.id) }}" onsubmit="return confirm('¿Eliminar los metadatos de este archivo?');">
+                  <form method="post" action="{{ url_for('strip_metadata', file_id=f.id) }}"
+                        data-confirm="¿Eliminar los metadatos de este archivo?">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-small">Quitar metadatos</button>
                   </form>
                 {% endif %}
                 {% if current_user.is_authenticated and current_user.is_admin %}
-                  <form method="post" action="{{ url_for('delete_file', file_id=f.id) }}" onsubmit="return confirm('¿Eliminar este archivo?');">
+                  <form method="post" action="{{ url_for('delete_file', file_id=f.id) }}"
+                        data-confirm="¿Eliminar este archivo? No se puede deshacer.">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-small btn-danger">Eliminar</button>
                   </form>
@@ -70,7 +83,8 @@
     <div class="modal">
       <div class="modal-header">
         <h2 id="preview-title">Vista previa</h2>
-        <button type="button" class="modal-close" onclick="closeModal('preview-overlay')">&times;</button>
+        <button type="button" class="modal-close"
+                data-action="close-modal" data-modal="preview-overlay">&times;</button>
       </div>
       <div class="modal-body" id="preview-body"></div>
     </div>
@@ -80,7 +94,8 @@
     <div class="modal">
       <div class="modal-header">
         <h2>Propiedades del archivo</h2>
-        <button type="button" class="modal-close" onclick="closeModal('props-overlay')">&times;</button>
+        <button type="button" class="modal-close"
+                data-action="close-modal" data-modal="props-overlay">&times;</button>
       </div>
       <div class="modal-body">
         <table class="props-table">
@@ -95,50 +110,4 @@
     </div>
   </div>
 
-  <script>
-    function openPreview(fileId, mimeType, name) {
-      const body = document.getElementById('preview-body');
-      const url = '/preview/' + fileId;
-      body.innerHTML = '';
-      if (mimeType.startsWith('image/')) {
-        const img = document.createElement('img');
-        img.src = url;
-        img.alt = name;
-        body.appendChild(img);
-      } else if (mimeType === 'application/pdf') {
-        const embed = document.createElement('embed');
-        embed.src = url;
-        embed.type = 'application/pdf';
-        body.appendChild(embed);
-      } else if (mimeType.startsWith('audio/')) {
-        const audio = document.createElement('audio');
-        audio.src = url;
-        audio.controls = true;
-        audio.style.width = '100%';
-        body.appendChild(audio);
-      } else if (mimeType.startsWith('video/')) {
-        const video = document.createElement('video');
-        video.src = url;
-        video.controls = true;
-        video.style.width = '100%';
-        body.appendChild(video);
-      } else {
-        const iframe = document.createElement('iframe');
-        iframe.src = url;
-        body.appendChild(iframe);
-      }
-      document.getElementById('preview-title').textContent = 'Vista previa — ' + name;
-      document.getElementById('preview-overlay').classList.add('open');
-    }
-
-    function openProps(name, uploader, visibility, size, mime, date) {
-      document.getElementById('prop-name').textContent = name;
-      document.getElementById('prop-uploader').textContent = uploader;
-      document.getElementById('prop-visibility').textContent = visibility === 'public' ? 'Público' : 'Privado';
-      document.getElementById('prop-size').textContent = size;
-      document.getElementById('prop-mime').textContent = mime;
-      document.getElementById('prop-date').textContent = date;
-      document.getElementById('props-overlay').classList.add('open');
-    }
-  </script>
 {% endblock %}
