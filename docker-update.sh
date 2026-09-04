@@ -84,8 +84,15 @@ paso()   { printf '\n\033[36m── %s\033[0m\n' "$*"; }
 # y el diff que se imprimía decía "0 insertions(+), 0 deletions(-)", que no
 # ayuda nada a entender qué pasa.
 #
-# core.fileMode=false hace que git no mire los permisos. Solo afecta a estas
-# comprobaciones, no a la configuración del repositorio.
+# core.fileMode=false hace que git no mire los permisos. Solo afecta a los
+# comandos que pasan por aquí, no a la configuración del repositorio.
+#
+# Y tiene que pasar por aquí TAMBIÉN el pull, no solo las comprobaciones. Que
+# la guarda perdonara el bit de ejecución no servía de nada si el `git pull`
+# de dos pasos más abajo seguía mirándolo: dejaba pasar la actualización para
+# abortarla acto seguido con "your local changes would be overwritten by
+# merge", ya con la copia de seguridad hecha y sin haber tocado el contenido
+# del fichero en ningún momento.
 git_sin_modos() {
     git -c core.fileMode=false "$@"
 }
@@ -301,7 +308,7 @@ fi
 # ── 3. Traer los cambios ──────────────────────────────────────────────────────
 if [ "$SIN_PULL" -eq 0 ]; then
     paso "Descargando la versión nueva"
-    git pull --ff-only
+    git_sin_modos pull --ff-only
 fi
 
 VERSION_NUEVA=$(version_del_codigo)

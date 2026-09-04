@@ -6,6 +6,21 @@ y el versionado es [semántico](https://semver.org/lang/es/).
 `docker-update.sh` imprime la sección de la versión nueva al actualizar, así
 que el primer bloque `## [...]` de este fichero es lo que verá quien despliegue.
 
+## [1.2.2] - 2026-09-04
+
+### Arreglado
+- **El `git pull` de la actualización abortaba por el bit de ejecución del
+  propio script.** En Linux hay que hacer `chmod +x docker-update.sh` para
+  poder ejecutarlo, y eso cuenta para git como una modificación del fichero.
+  Las comprobaciones previas ya lo perdonaban a propósito (`core.fileMode=
+  false`), pero el `git pull` de dos pasos más abajo no: dejaba pasar la
+  actualización para abortarla acto seguido con «your local changes to the
+  following files would be overwritten by merge», ya con la copia de seguridad
+  hecha y sin que el contenido del fichero hubiera cambiado en ningún momento.
+  Ahora el pull ignora los permisos igual que el resto.
+- Los tres `.sh` se guardan ya como ejecutables en el repositorio, así que en
+  una instalación nueva no hace falta el `chmod +x` que causaba todo esto.
+
 ## [1.2.1] - 2026-09-04
 
 ### Arreglado
