@@ -86,6 +86,11 @@ ips_de_la_lan() {
 HOST_LAN_IPS=$(ips_de_la_lan)
 export HOST_LAN_IPS
 
+# El volumen es "external": lo crea el script, no Compose. Así "docker compose
+# down -v" no puede borrar los archivos subidos ni la base de datos. Crearlo es
+# idempotente: si ya existe, no hace nada.
+docker volume create httpWebServer >/dev/null
+
 docker compose up -d --build "$@"
 
 # El esquema depende de si el HTTPS está activado, y ese estado vive en el

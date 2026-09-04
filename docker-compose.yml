@@ -61,10 +61,19 @@ services:
 
 volumes:
   httpWebServer:
-    # name: explícito para que el volumen se llame tal cual en "docker volume
-    # ls". Sin él, Compose le antepone el nombre del proyecto y quedaría
-    # "httpwebserver_httpWebServer".
+    # external: el volumen lo crean docker-up.sh y docker-update.sh, no Compose.
+    # Dos motivos:
     #
-    # Los nombres de volumen sí admiten mayúsculas, al contrario que los de
-    # imagen (ver el comentario de "image:" más arriba).
+    #   1. "docker compose down -v" NO puede borrarlo. Con un volumen gestionado
+    #      por Compose, ese comando se lleva por delante todos los archivos
+    #      subidos, la base de datos y los certificados sin preguntar. Aquí
+    #      Compose se niega, que es lo que uno querría de unos datos que no se
+    #      pueden recuperar.
+    #   2. Quita el aviso "volume already exists but was not created by Docker
+    #      Compose" en instalaciones donde el volumen se creó a mano.
+    #
+    # name: explícito para que se llame tal cual en "docker volume ls"; sin él,
+    # Compose le antepone el nombre del proyecto. Los nombres de volumen sí
+    # admiten mayúsculas, al contrario que los de imagen (ver "image:" arriba).
+    external: true
     name: httpWebServer

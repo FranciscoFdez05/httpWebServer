@@ -75,6 +75,21 @@ aviso()  { printf '\n\033[33m%s\033[0m\n' "$*"; }
 error()  { printf '\n\033[31m%s\033[0m\n' "$*" >&2; }
 paso()   { printf '\n\033[36m── %s\033[0m\n' "$*"; }
 
+# git ignorando el bit de ejecución.
+#
+# Un "chmod +x docker-update.sh" —que en Linux hace falta si el fichero llegó
+# sin el bit puesto— cuenta para git como una modificación del fichero. La
+# guarda de más abajo lo veía como "tienes cambios sin confirmar" y se negaba a
+# actualizar: el propio acto de hacer ejecutable el script impedía ejecutarlo,
+# y el diff que se imprimía decía "0 insertions(+), 0 deletions(-)", que no
+# ayuda nada a entender qué pasa.
+#
+# core.fileMode=false hace que git no mire los permisos. Solo afecta a estas
+# comprobaciones, no a la configuración del repositorio.
+git_sin_modos() {
+    git -c core.fileMode=false "$@"
+}
+
 # La versión vive en app.py (`__version__`), que es lo que devuelve también
 # /api/health: así la etiqueta de la imagen y lo que responde el contenedor no
 # pueden desincronizarse.
@@ -144,7 +159,7 @@ fi
 # `config.ini` se distribuye con el código, así que editarlo en el servidor
 # choca con cada actualización. El puerto tiene su variable de entorno, y ese es
 # el canal que sobrevive a los pulls.
-if [ "$SIN_PULL" -eq 0 ] && ! git diff --quiet -- config.ini 2>/dev/null; then
+if [ "$SIN_PULL" -eq 0 ] && ! git_sin_modos diff --quiet -- config.ini 2>/dev/null; then
     error "config.ini tiene cambios locales y el pull chocaría con ellos."
     cat <<'FIN'
 
@@ -162,9 +177,9 @@ fi
 
 # Cualquier otro cambio local hace fallar el pull a mitad. Mejor pararse aquí,
 # con el servicio antiguo todavía intacto, que a medio camino.
-if [ "$SIN_PULL" -eq 0 ] && ! git diff --quiet 2>/dev/null; then
+if [ "$SIN_PULL" -eq 0 ] && ! git_sin_modos diff --quiet 2>/dev/null; then
     error "Hay cambios locales sin confirmar en el repositorio:"
-    git --no-pager diff --stat >&2
+    git_sin_modos --no-pager diff --stat >&2
     echo >&2
     echo "  Guárdalos (git stash), confírmalos o descártalos antes de actualizar." >&2
     echo "  Si solo quieres reconstruir sin traer nada: ./docker-update.sh --sin-pull" >&2
@@ -275,6 +290,11 @@ HOST_LAN_IPS=$(
 export HOST_LAN_IPS
 
 # ── 5. Construir y levantar ───────────────────────────────────────────────────
+# El volumen es "external": lo crea el script, no Compose. Así "docker compose
+# down -v" no puede borrar los archivos subidos ni la base de datos. Crearlo es
+# idempotente: si ya existe, no hace nada.
+docker volume create httpWebServer >/dev/null
+
 paso "Construyendo la imagen ${IMAGEN}:${VERSION_NUEVA}"
 docker compose build
 

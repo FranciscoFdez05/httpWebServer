@@ -32,6 +32,11 @@ que el primer bloque `## [...]` de este fichero es lo que verá quien despliegue
 - El contenedor y el volumen de Docker pasan a llamarse `httpWebServer`. La
   imagen se queda en `httpwebserver` (minúsculas) porque Docker no admite
   mayúsculas en el nombre de una imagen.
+- El volumen de datos se declara `external`, y lo crean los scripts en vez de
+  Compose. Así `docker compose down -v` **no puede** borrar los archivos
+  subidos, la base de datos ni los certificados: Compose se niega a tocar un
+  volumen que no gestiona él. De paso desaparece el aviso «volume already
+  exists but was not created by Docker Compose».
 - La salida de `docker-up.sh` indica si el servidor quedó en `http` o `https`.
 
 ### Corregido
@@ -41,6 +46,12 @@ que el primer bloque `## [...]` de este fichero es lo que verá quien despliegue
   afectaba a `/api/health`, `docker-update.sh` habría revertido una versión que
   funcionaba por un simple error tipográfico. Ahora se resuelve una sola vez al
   importar: avisa por el log y sigue con el valor por defecto.
+- `./docker-update.sh` se negaba a actualizar diciendo «hay cambios locales sin
+  confirmar» cuando lo único que había cambiado era el bit de ejecución. Los
+  scripts se publicaban sin él, así que en Linux había que hacerles `chmod +x`
+  para poder usarlos — y ese `chmod` era justo lo que bloqueaba la
+  actualización: hacer el script ejecutable impedía ejecutarlo. Ahora se
+  publican ya como ejecutables, y la comprobación ignora los permisos.
 - `/data/tls` se creaba con permisos `0755` en instalaciones que ya tenían
   datos. El Dockerfile lo deja en `700`, pero eso solo llega al volumen la
   primera vez que Docker lo crea; si el volumen no está vacío, no copia nada.

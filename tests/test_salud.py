@@ -144,6 +144,29 @@ def test_el_volumen_de_datos_se_llama_httpwebserver():
     assert "- httpWebServer:/data" in compose
 
 
+def test_el_volumen_de_datos_no_lo_puede_borrar_compose():
+    """Declarado como external, "docker compose down -v" no puede llevarse por
+    delante los archivos subidos, la base de datos y los certificados. A cambio
+    lo tienen que crear los scripts, porque Compose ya no lo hace."""
+    import re
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    with open(os.path.join(raiz, "docker-compose.yml"), encoding="utf-8") as f:
+        compose = f.read()
+    assert re.search(r"^\s+external:\s*true\s*$", compose, re.MULTILINE), (
+        "el volumen de datos debe ser external"
+    )
+
+    # Si Compose no lo crea, alguien tiene que hacerlo, o el "up" falla con
+    # «external volume not found».
+    for script in ("docker-up.sh", "docker-update.sh"):
+        with open(os.path.join(raiz, script), encoding="utf-8") as f:
+            contenido = f.read()
+        assert "docker volume create httpWebServer" in contenido, (
+            f"{script} debe crear el volumen antes de levantar"
+        )
+
+
 def test_la_imagen_incluye_todos_los_modulos_locales():
     """Un módulo que app.py importa pero que el Dockerfile no copia hace que el
     contenedor muera al arrancar con un ImportError. En local no se nota,
@@ -168,3 +191,24 @@ def test_la_imagen_incluye_todos_los_modulos_locales():
     for modulo in locales:
         assert f"{modulo}.py" in dockerfile, \
             f"app.py importa {modulo}, pero el Dockerfile no copia {modulo}.py"
+
+
+def test_la_guarda_de_cambios_locales_ignora_los_permisos():
+    """En Linux los scripts hay que poder ejecutarlos, y un `chmod +x` cuenta
+    para git como una modificación del fichero. Sin ignorar los permisos, la
+    guarda veía «tienes cambios sin confirmar» y se negaba a actualizar: hacer
+    el script ejecutable impedía ejecutarlo. Y el diff que imprimía decía
+    «0 insertions(+), 0 deletions(-)», que no explica nada."""
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(raiz, "docker-update.sh"), encoding="utf-8") as f:
+        script = f.read()
+
+    assert "core.fileMode=false" in script, "la guarda debe ignorar los permisos"
+    # Y ninguna comprobación puede haberse quedado con el git de siempre.
+    for linea in script.splitlines():
+        limpia = linea.strip()
+        if limpia.startswith("#"):
+            continue
+        assert "git diff --quiet" not in limpia, (
+            f"esta comprobación no ignora los permisos: {limpia}"
+        )
