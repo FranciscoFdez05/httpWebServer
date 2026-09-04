@@ -90,6 +90,26 @@ git_sin_modos() {
     git -c core.fileMode=false "$@"
 }
 
+# Adónde volver para dejar también el código como estaba.
+#
+# Esto decía siempre "git checkout v<version anterior>", y esa etiqueta podía
+# no existir: se crean a mano al publicar, y una sola que se olvide deja el
+# consejo apuntando a la nada. Encima se imprime justo después de que una
+# actualización haya salido mal, que es el peor momento para descubrir que el
+# comando que te dan no funciona.
+#
+# El commit de antes del pull sí existe siempre. La etiqueta se prefiere solo
+# porque se lee mejor, y solo si está de verdad ahí.
+referencia_anterior() {
+    if [ "$VERSION_ANTERIOR" != "desconocida" ]        && git rev-parse -q --verify "refs/tags/v${VERSION_ANTERIOR}" >/dev/null 2>&1; then
+        echo "v${VERSION_ANTERIOR}"
+    elif [ -n "$COMMIT_ANTERIOR" ]; then
+        echo "$COMMIT_ANTERIOR"
+    else
+        echo "HEAD@{1}"   # el sitio donde estaba el repositorio antes del pull
+    fi
+}
+
 # La versión vive en app.py (`__version__`), que es lo que devuelve también
 # /api/health: así la etiqueta de la imagen y lo que responde el contenedor no
 # pueden desincronizarse.
@@ -210,6 +230,12 @@ fi
 VERSION_ANTERIOR=$(version_del_codigo)
 [ -n "$VERSION_ANTERIOR" ] || VERSION_ANTERIOR="desconocida"
 echo "Versión instalada: $VERSION_ANTERIOR"
+
+# El commit que hay ahora mismo, antes de que el pull lo mueva: es exactamente
+# el código con el que se construyó la imagen que está en marcha. Se guarda
+# aquí porque es lo único que se puede garantizar cuando más tarde haya que
+# decirle a alguien adónde volver (ver referencia_anterior).
+COMMIT_ANTERIOR=$(git rev-parse --short HEAD 2>/dev/null) || COMMIT_ANTERIOR=""
 
 # Primera actualización con este script: la imagen que está corriendo se
 # construyó sin etiqueta de versión, así que no habría a dónde volver. Se
@@ -372,10 +398,11 @@ if [ "$VERSION_ANTERIOR" != "desconocida" ] \
     paso "Levantando de nuevo la $VERSION_ANTERIOR"
     APP_VERSION="$VERSION_ANTERIOR" docker compose up -d --no-build
     aviso "Se ha vuelto a la $VERSION_ANTERIOR. El código del repositorio SÍ está actualizado:
-para dejarlo también como estaba, ejecuta  git checkout v${VERSION_ANTERIOR}"
+para dejarlo también como estaba:  git checkout $(referencia_anterior)
+y para volver luego a la última versión:  git checkout main"
 else
     error "No hay imagen etiquetada de la $VERSION_ANTERIOR; no se puede volver sola.
-Para reconstruir la anterior:  git checkout v${VERSION_ANTERIOR} && ./docker-update.sh --sin-pull"
+Para reconstruir la anterior:  git checkout $(referencia_anterior) && ./docker-update.sh --sin-pull"
 fi
 
 echo

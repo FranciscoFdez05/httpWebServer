@@ -30,6 +30,15 @@ que el primer bloque `## [...]` de este fichero es lo que verá quien despliegue
   Docker cada 30 s) probaba los esquemas en el mismo orden y por el mismo
   motivo: con HTTP en claro dejaba clavado uno de los dos workers cinco
   segundos de cada treinta, para nada.
+- Cuando una actualización falla y se vuelve a la versión anterior, el aviso
+  decía «ejecuta `git checkout v<version>`» y esa etiqueta podía no existir: se
+  crean a mano al publicar y no había ninguna en el repositorio, así que el
+  comando fallaba justo en el momento en el que uno menos lo necesita. Ahora se
+  usa la etiqueta solo si está de verdad, y si no, el commit que había antes
+  del `git pull`, que es exactamente el código de la imagen anterior. También
+  se dice cómo volver luego a la última versión (`git checkout main`), que con
+  un `checkout` a pelo se queda uno con el HEAD desatado sin saberlo.
+  - Publicadas además las etiquetas que faltaban: `v1.0.0`, `v1.1.0`, `v1.2.0`.
 
 ## [1.2.0] - 2026-09-04
 
