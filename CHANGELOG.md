@@ -68,8 +68,14 @@ Primera versión publicada.
   estado local, copia la base de datos y los certificados, construye la imagen
   etiquetada con su versión, y **espera a que `/api/health` responda**. Si la
   versión nueva no arranca, vuelve sola a la anterior.
-- Imágenes etiquetadas por versión (`httpwebserver:<version>`), que es lo que
-  hace posible volver atrás en segundos en vez de reconstruyendo.
+- Imágenes etiquetadas por versión (`httpwebserver:<version>`, en minúsculas
+  porque Docker lo exige), que es lo que hace posible volver atrás en segundos
+  en vez de reconstruyendo. El contenedor y el volumen se llaman `httpWebServer`.
+- `migrar-volumen.sh`: mueve los datos del volumen antiguo (`ftp_data`) al
+  nuevo. Renombrar un volumen no mueve nada por sí solo, así que sin esto una
+  instalación anterior arrancaría vacía. No borra el volumen viejo, y
+  `docker-up.sh` y `docker-update.sh` se paran y avisan si falta la migración.
+- El número de versión se muestra en el pie de todas las páginas.
 - Endpoint `/api/health`: comprueba la base de datos y que el directorio de
   subidas sea escribible. Devuelve 503 si algo falla.
 - Configuración en dos capas: `config.ini` son los valores de fábrica y viaja

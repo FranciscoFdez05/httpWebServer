@@ -57,6 +57,18 @@ DATA_DIR = os.environ.get("DATA_DIR", DEFAULT_DATA_DIR)
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 DB_PATH = os.path.join(DATA_DIR, "app.db")
 
+# La consola de Windows usa cp1252 por defecto, y ahí cualquier mensaje con un
+# acento o una flecha hace que logging escupa un UnicodeEncodeError con su
+# traza en mitad del arranque. En el contenedor no pasa (todo es UTF-8), pero
+# ejecutando "python app.py" en Windows sí, y el error asusta más que el propio
+# mensaje que intentaba imprimirse. errors="replace" además garantiza que un
+# nombre de fichero raro en el log de acceso nunca tumbe una petición.
+for _flujo in (sys.stdout, sys.stderr):
+    try:
+        _flujo.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass  # no siempre es un flujo de texto reconfigurable
+
 # Sin esto no se ve absolutamente nada por consola: waitress anuncia el
 # "Serving on ..." con logging.info, y sin handlers configurados Python solo
 # deja pasar WARNING o superior. Va a stdout para que "docker logs" lo recoja
@@ -67,7 +79,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     stream=sys.stdout,
 )
-log = logging.getLogger("ftp-server")
+log = logging.getLogger("httpWebServer")
 
 # config.ini son los valores de fábrica: viaja con el código y se actualiza con
 # él, así que editarlo en el servidor choca con cada git pull. El entorno (.env,
@@ -663,6 +675,10 @@ def template_helpers():
         is_previewable=is_previewable,
         supports_metadata_removal=supports_metadata_removal,
         min_password_length=MIN_PASSWORD_LENGTH,
+        # Se pinta en el pie de todas las páginas. Saber a simple vista qué
+        # versión está sirviendo evita la duda de si una actualización llegó a
+        # aplicarse, sin tener que entrar al servidor a mirarlo.
+        version=__version__,
     )
 
 

@@ -1,12 +1,17 @@
 services:
-  file-server:
+  httpwebserver:
     build: .
     # Sin "image:" cada build deja la imagen anterior sin nombre, así que volver
     # a la versión de antes obliga a reconstruir desde el código anterior: varios
     # minutos, y con la base de datos ya migrada. Etiquetando cada versión, la
     # vuelta atrás es levantar de nuevo una imagen que ya existe.
+    #
+    # En minúsculas porque Docker lo exige: el nombre de una imagen solo admite
+    # [a-z0-9._-], y "httpWebServer:1.0.0" falla al construir con «repository
+    # name must be lowercase». El nombre del contenedor sí admite mayúsculas, y
+    # es el que se ve en "docker ps" y el que se teclea en "docker logs".
     image: "httpwebserver:${APP_VERSION:-dev}"
-    container_name: ftp-web
+    container_name: httpWebServer
     restart: unless-stopped
     # Mapeo explícito host:contenedor. PORT se lee de .env (y si no, de
     # config.ini) y se exporta automáticamente al llamar a ./docker-up.sh o
@@ -48,11 +53,24 @@ services:
     volumes:
       # Contiene uploads, app.db, secret_key y tls/ (los certificados y la
       # clave de la CA). Es lo único que hay que respaldar.
-      - ftp_data:/data
+      #
+      # OJO si vienes de una instalación con el volumen antiguo (ftp_data):
+      # cambiar este nombre NO mueve nada. Docker crea un volumen nuevo y vacío
+      # y deja los archivos y la base de datos en el viejo, así que el servidor
+      # arrancaría como recién instalado. Para moverlos: ./migrar-volumen.sh
+      # (docker-up.sh y docker-update.sh se paran y avisan si detectan el caso).
+      - httpWebServer:/data
       # Monta config.ini para poder cambiar los valores de fábrica sin
       # reconstruir la imagen. Para configurar una instalación concreta usa
       # .env, que además no se versiona.
       - ./config.ini:/app/config.ini:ro
 
 volumes:
-  ftp_data:
+  httpWebServer:
+    # name: explícito para que el volumen se llame tal cual en "docker volume
+    # ls". Sin él, Compose le antepone el nombre del proyecto y quedaría
+    # "httpwebserver_httpWebServer".
+    #
+    # Los nombres de volumen sí admiten mayúsculas, al contrario que los de
+    # imagen (ver el comentario de "image:" más arriba).
+    name: httpWebServer

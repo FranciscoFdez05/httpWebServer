@@ -62,3 +62,18 @@ def test_el_minimo_de_contrasena_llega_a_los_formularios(crear_app):
     cuerpo = modulo.app.test_client().get("/setup").data.decode()
     assert 'minlength="14"' in cuerpo
     assert "al menos 14" in cuerpo
+
+
+def test_la_version_sale_en_el_pie(modulo, cliente):
+    """Poder ver de un vistazo qué versión está sirviendo el servidor evita la
+    duda de si una actualización llegó a aplicarse."""
+    cuerpo = cliente.get("/login").data.decode()
+    assert f"httpWebServer v{modulo.__version__}" in cuerpo
+
+
+def test_la_version_del_pie_es_la_misma_que_la_de_health(modulo, cliente):
+    """Son la misma constante; si alguien las separara, el pie diría una cosa y
+    docker-update.sh comprobaría otra."""
+    del_pie = modulo.__version__
+    de_health = cliente.get("/api/health").get_json()["version"]
+    assert del_pie == de_health

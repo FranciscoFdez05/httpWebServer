@@ -542,3 +542,10 @@ section + section { margin-top: 2.5rem; }
 .preview-media {
   width: 100%;
 }
+
+/* El número de versión del pie: presente pero discreto, para poder comprobar
+   de un vistazo qué versión está sirviendo el servidor. */
+.sitefooter .version {
+  opacity: 0.65;
+  margin-right: 0.75rem;
+}

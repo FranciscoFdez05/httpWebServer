@@ -149,10 +149,28 @@ Los ajustes principales:
 | Forzar HTTP | `HTTPS_ENABLED` | (sin fijar) | `false` recupera el arranque si un certificado falla |
 | Intentos antes de bloquear | `LOGIN_MAX_ATTEMPTS` | `10` | Frenar la fuerza bruta |
 
-**Datos** → volumen Docker `ftp_data`, montado en `/data` dentro del contenedor
+**Datos** → volumen Docker `httpWebServer`, montado en `/data` dentro del contenedor
 (`/data/uploads` para los archivos, `/data/app.db` para la base de datos y
 `/data/backups` para las copias previas a cada actualización). Sobrevive a
 `docker compose down` y a reconstruir la imagen.
+
+### ♻️ Si vienes de una instalación anterior
+
+El volumen de datos se llamaba `ftp_data` y ahora se llama `httpWebServer`.
+**Renombrarlo no mueve nada**: Docker se limita a crear un volumen nuevo y
+vacío, así que el servidor arrancaría como recién instalado. Tus archivos no se
+pierden —siguen en el volumen viejo— pero el susto es real.
+
+Antes de nada, una sola vez:
+
+```bash
+./migrar-volumen.sh
+```
+
+Copia los datos al volumen nuevo y **no borra el antiguo**, que se queda como
+copia de seguridad hasta que compruebes que todo está en su sitio. `docker-up.sh`
+y `docker-update.sh` se paran y avisan si detectan que falta esta migración, así
+que no puedes arrancar vacío por descuido.
 
 ### 🔄 Actualizar una instalación en marcha
 
@@ -180,11 +198,13 @@ Para reconstruir sin traer cambios: `./docker-update.sh --sin-pull`.
 
 ```bash
 docker compose ps                     # estado del contenedor (y si está healthy)
-docker logs -f ftp-web                # logs en vivo
+docker logs -f httpWebServer          # logs en vivo
 curl -k https://localhost:8000/api/health  # ¿responde? (-k si el HTTPS es propio)
 docker compose down                   # parar (sin borrar datos)
 ./docker-up.sh                        # instalación nueva: construir y levantar
 ./docker-update.sh                    # instalación existente: actualizar
+./migrar-volumen.sh                   # una vez, si vienes del volumen ftp_data
+docker volume ls | grep httpWebServer # dónde viven los datos
 python -m pytest -q                   # tests (pip install -r requirements-dev.txt)
 ```
 

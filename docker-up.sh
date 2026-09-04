@@ -7,7 +7,7 @@
 set -e
 cd "$(dirname "$0")"
 
-SERVICIO="file-server"
+SERVICIO="httpwebserver"
 
 if ! command -v docker >/dev/null 2>&1; then
     echo "Error: docker no está instalado o no está en el PATH." >&2
@@ -85,6 +85,32 @@ ips_de_la_lan() {
 }
 HOST_LAN_IPS=$(ips_de_la_lan)
 export HOST_LAN_IPS
+
+
+# El volumen pasó a llamarse httpWebServer. Cambiar el nombre en
+# docker-compose.yml no mueve nada: Docker crearía uno nuevo y vacío y el
+# servidor arrancaría como recién instalado, con los datos intactos pero
+# invisibles en el volumen viejo. Es un susto innecesario y se detecta antes.
+comprobar_volumen_antiguo() {
+    antiguo=$(docker volume ls -q 2>/dev/null | grep -E '(^|_)ftp_data$' | head -n 1 || true)
+    [ -n "$antiguo" ] || return 0
+    docker volume inspect httpWebServer >/dev/null 2>&1 && return 0
+
+    printf '\n\033[31m%s\033[0m\n' "Tus datos siguen en el volumen antiguo ($antiguo)." >&2
+    cat >&2 <<'FIN'
+
+  El volumen pasó a llamarse httpWebServer, y renombrarlo no mueve los datos:
+  si se arranca ahora, el servidor saldría vacío, como recién instalado. Tus
+  archivos y tu base de datos NO se han perdido, siguen en el volumen de antes.
+
+  Para moverlos (no borra nada, deja el antiguo como copia):
+
+      ./migrar-volumen.sh
+
+FIN
+    exit 1
+}
+comprobar_volumen_antiguo
 
 docker compose up -d --build "$@"
 

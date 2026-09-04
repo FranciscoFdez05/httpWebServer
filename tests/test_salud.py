@@ -94,3 +94,96 @@ def test_sqlite_en_modo_wal(modulo):
         modo = db.execute("PRAGMA journal_mode").fetchone()[0]
         db.close()
     assert modo.lower() == "wal"
+
+
+def test_los_nombres_de_docker_son_coherentes():
+    """El servicio que nombran los scripts tiene que existir en el compose. Si
+    se separan, docker-update.sh no encuentra el contenedor y da por muerta una
+    versión que arrancó bien."""
+    import re
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    with open(os.path.join(raiz, "docker-compose.yml"), encoding="utf-8") as f:
+        compose = f.read()
+    servicios = re.findall(r"^  ([A-Za-z0-9_-]+):$", compose, re.MULTILINE)
+    assert "httpwebserver" in servicios, f"servicios en el compose: {servicios}"
+
+    for script in ("docker-up.sh", "docker-update.sh"):
+        with open(os.path.join(raiz, script), encoding="utf-8") as f:
+            contenido = f.read()
+        servicio = re.search(r'^SERVICIO="([^"]+)"', contenido, re.MULTILINE)
+        assert servicio, f"{script} no define SERVICIO"
+        assert servicio.group(1) in servicios, \
+            f"{script} usa el servicio {servicio.group(1)}, que no está en el compose"
+
+
+def test_el_nombre_de_la_imagen_es_valido_para_docker():
+    """Docker solo admite [a-z0-9._-] en el nombre de una imagen: con mayúsculas
+    el build falla con «repository name must be lowercase»."""
+    import re
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(raiz, "docker-compose.yml"), encoding="utf-8") as f:
+        compose = f.read()
+    imagen = re.search(r'^\s*image:\s*"?([^":$]+)', compose, re.MULTILINE).group(1)
+    assert re.fullmatch(r"[a-z0-9]+([._-][a-z0-9]+)*", imagen), \
+        f"nombre de imagen no válido para Docker: {imagen}"
+
+
+def test_el_volumen_del_compose_y_el_de_los_scripts_coinciden():
+    """El volumen se renombró de ftp_data a httpWebServer. Los scripts detectan
+    el volumen antiguo para no arrancar con uno nuevo y vacío; si el nombre
+    nuevo se cambiara aquí y no allí, la detección dejaría de protegerte."""
+    import re
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    with open(os.path.join(raiz, "docker-compose.yml"), encoding="utf-8") as f:
+        compose = f.read()
+    assert re.search(r"^\s+name:\s*httpWebServer\s*$", compose, re.MULTILINE), \
+        "el volumen del compose debe llamarse httpWebServer"
+    assert "- httpWebServer:/data" in compose
+
+    for script in ("docker-up.sh", "docker-update.sh"):
+        with open(os.path.join(raiz, script), encoding="utf-8") as f:
+            contenido = f.read()
+        assert "docker volume inspect httpWebServer" in contenido, \
+            f"{script} no comprueba el volumen nuevo"
+        assert "ftp_data" in contenido, \
+            f"{script} no detecta el volumen antiguo"
+        assert "migrar-volumen.sh" in contenido, \
+            f"{script} no dice cómo migrar"
+
+
+def test_el_script_de_migracion_no_borra_el_volumen_antiguo():
+    """Es la red de seguridad entera: mientras el volumen antiguo exista, la
+    migración es reversible. El script solo puede EXPLICAR cómo borrarlo.
+
+    Se descuentan los comentarios, los heredoc y los echo: ahí «docker volume
+    rm» es texto dirigido al usuario, no una orden que el script ejecute.
+    """
+    import re
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(raiz, "migrar-volumen.sh"), encoding="utf-8") as f:
+        lineas = f.read().splitlines()
+
+    ejecutable = []
+    terminador = None
+    for linea in lineas:
+        if terminador is not None:
+            if linea.strip() == terminador:
+                terminador = None
+            continue                      # cuerpo de un heredoc: es texto
+        apertura = re.search(r"<<-?'?([A-Za-z_][A-Za-z0-9_]*)'?", linea)
+        if apertura:
+            terminador = apertura.group(1)
+        limpia = linea.strip()
+        if not limpia or limpia.startswith("#") or limpia.startswith("echo "):
+            continue
+        ejecutable.append(limpia)
+
+    for linea in ejecutable:
+        assert "volume rm" not in linea, (
+            f"el script no debe ejecutar un borrado de volumen: {linea}"
+        )
+
+    # Y debe seguir diciendo al usuario cómo borrarlo él, cuando lo compruebe.
+    assert "docker volume rm $ANTIGUO" in "\n".join(lineas)
