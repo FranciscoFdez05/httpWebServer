@@ -24,9 +24,16 @@ CONTEXTO = ssl._create_unverified_context()
 # Se prueban los dos esquemas en vez de leer el estado del TLS: así la
 # comprobación sigue funcionando durante el reinicio en el que se activa o se
 # desactiva el HTTPS, que es justo cuando más falta hace.
+#
+# http primero, y no al revés. Pedir https a un servidor que está sirviendo
+# http deja al worker de gunicorn leyendo del socket a la espera del final de
+# una línea de petición que nunca llega (lo que ha recibido es un saludo TLS),
+# y ahí se queda hasta que el cliente se rinde: cinco segundos de uno de los
+# dos workers, cada treinta, para nada. Al revés no pasa: una petición en
+# claro contra un servidor con TLS se rechaza al instante.
 URLS = (
-    f"https://127.0.0.1:{PUERTO}/api/health",
     f"http://127.0.0.1:{PUERTO}/api/health",
+    f"https://127.0.0.1:{PUERTO}/api/health",
 )
 
 

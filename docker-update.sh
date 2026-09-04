@@ -124,21 +124,42 @@ puerto_configurado() {
 # dentro del propio contenedor, donde python siempre está: la imagen trae
 # healthcheck.py, que es exactamente la misma comprobación que hace Docker.
 #
-# Se prueba https y luego http porque el esquema depende de si el HTTPS está
+# Se prueban los dos esquemas porque cuál sirve depende de si el HTTPS está
 # activado, y ese estado puede cambiar justo en esta actualización. Sondear
 # solo http daría por muerta una versión que arrancó bien con TLS.
+#
+# El orden y el tope de tiempo NO son un detalle. Sondar https contra un
+# servidor que está sirviendo http se queda colgado para siempre: curl manda el
+# saludo TLS y espera respuesta; gunicorn recibe unos bytes binarios, no
+# encuentra el final de la línea de petición y sigue leyendo del socket a la
+# espera de más. Cada uno esperando al otro, y sin nadie que corte, porque el
+# servidor arranca con --timeout 0 justo para no cortar las subidas largas. El
+# bucle de espera de abajo se quedaba ahí parado, sin llegar nunca a los 90 s
+# ni a la vuelta atrás, y de paso dejaba clavado uno de los dos workers.
+#
+# Al revés no pasa: una petición en claro contra un servidor con TLS se rechaza
+# al instante. Por eso ahora http primero. Y aun así, cada sonda con su límite
+# de tiempo: cuando lo que se está comprobando es si el servidor arrancó bien,
+# lo último que se puede dar por hecho es que va a contestar.
 #
 # --insecure / --no-check-certificate: el certificado lo firma la CA local, que
 # el host no tiene instalada. Lo que se comprueba aquí es que la aplicación
 # responde, no a quién pertenece el certificado, y la conexión es a localhost.
+SONDA_TIMEOUT=5   # segundos como mucho por intento
+
 comprobar_salud() {
-    for esquema in https http; do
+    for esquema in http https; do
         if command -v curl >/dev/null 2>&1; then
-            curl -fsS --insecure "${esquema}://localhost:${PORT}/api/health" 2>/dev/null && return 0
+            curl -fsS --insecure --connect-timeout 3 --max-time "$SONDA_TIMEOUT" \
+                "${esquema}://localhost:${PORT}/api/health" 2>/dev/null && return 0
         elif command -v wget >/dev/null 2>&1; then
-            wget -qO- --no-check-certificate "${esquema}://localhost:${PORT}/api/health" 2>/dev/null && return 0
+            wget -qO- --no-check-certificate --tries=1 --timeout="$SONDA_TIMEOUT" \
+                "${esquema}://localhost:${PORT}/api/health" 2>/dev/null && return 0
         else
+            # healthcheck.py ya prueba los dos esquemas por su cuenta, con 5 s
+            # por URL, así que se llama una vez y no una por esquema.
             docker compose exec -T "$SERVICIO" python /app/healthcheck.py >/dev/null 2>&1 && return 0
+            return 1
         fi
     done
     return 1
@@ -307,14 +328,17 @@ docker compose up -d
 # aplicación funciona».
 paso "Esperando a que responda (hasta ${ESPERA_SALUD}s)"
 
+# El límite se cuenta con el reloj, no contando vueltas. Contando vueltas,
+# "hasta 90s" era en realidad "hasta 90 intentos", y un intento que tarda no
+# gasta espera: con las sondas de arriba sin tope, la primera que se colgaba
+# congelaba el bucle entero.
 sano=0
-i=0
-while [ "$i" -lt "$ESPERA_SALUD" ]; do
+LIMITE=$(( $(date +%s) + ESPERA_SALUD ))
+while [ "$(date +%s)" -lt "$LIMITE" ]; do
     if comprobar_salud >/dev/null 2>&1; then
         sano=1
         break
     fi
-    i=$((i + 1))
     printf '.'
     sleep 1
 done

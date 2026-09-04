@@ -6,6 +6,31 @@ y el versionado es [semántico](https://semver.org/lang/es/).
 `docker-update.sh` imprime la sección de la versión nueva al actualizar, así
 que el primer bloque `## [...]` de este fichero es lo que verá quien despliegue.
 
+## [1.2.1] - 2026-09-04
+
+### Arreglado
+- **`docker-update.sh` se quedaba colgado esperando a que la versión nueva
+  respondiera.** La comprobación de salud probaba `https` antes que `http`, y
+  pedir `https` a un servidor que está sirviendo `http` no da error: se queda
+  esperando. `curl` manda el saludo TLS y espera respuesta; `gunicorn` recibe
+  unos bytes binarios, no encuentra el final de la línea de petición y sigue
+  leyendo del socket a la espera de más. Los dos esperando al otro, y sin nadie
+  que corte, porque el servidor arranca con `--timeout 0` justo para no cortar
+  las subidas largas.
+  - Ahora se prueba `http` primero. Al revés no pasa: una petición en claro
+    contra un servidor con TLS se rechaza al instante.
+  - Y cada sonda tiene su tope de 5 s. Cuando lo que se comprueba es si el
+    servidor arrancó bien, lo último que se puede dar por hecho es que va a
+    contestar.
+- La espera del arranque se cuenta con el reloj y no contando vueltas del
+  bucle. «Hasta 90s» era en realidad «hasta 90 intentos»: un intento que se
+  colgaba no gastaba espera, así que no se llegaba nunca ni al aviso ni a la
+  vuelta atrás automática. Se quedaba ahí parado, con un punto en pantalla.
+- La comprobación de salud del contenedor (`healthcheck.py`, la que ejecuta
+  Docker cada 30 s) probaba los esquemas en el mismo orden y por el mismo
+  motivo: con HTTP en claro dejaba clavado uno de los dos workers cinco
+  segundos de cada treinta, para nada.
+
 ## [1.2.0] - 2026-09-04
 
 ### Cambiado
