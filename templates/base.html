@@ -17,6 +17,7 @@
         <a href="{{ url_for('upload') }}">Subir archivo</a>
         {% if current_user.is_admin %}
           <a href="{{ url_for('admin') }}">Administración</a>
+          <a href="{{ url_for('admin_ajustes') }}">Ajustes</a>
         {% endif %}
         <a href="{{ url_for('change_password') }}">Cambiar contraseña</a>
         <span class="user-tag">{{ current_user.username }}{% if current_user.is_admin %} (admin){% endif %}</span>

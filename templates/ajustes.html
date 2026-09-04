@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Ajustes{% endblock %}
+{% block container_class %}container-wide{% endblock %}
+{% block content %}
+  <div class="page-centered">
+    <h1>Ajustes</h1>
+    <p class="hint">
+      Se guardan en el servidor y se aplican al momento, sin reiniciar. La única
+      excepción es el HTTPS, que se activa al arrancar.
+    </p>
+  </div>
+
+  {# ── HTTPS ──────────────────────────────────────────────────────────── #}
+  <section class="page-centered">
+    <h2>🔒 HTTPS</h2>
+    <table class="props-table">
+      <tr>
+        <td>Estado</td>
+        <td>
+          {% if https_activo %}
+            <span class="badge badge-public">Activado</span>
+            {% if not https_en_uso %} — pendiente de reiniciar el servidor{% endif %}
+          {% else %}
+            <span class="badge badge-private">Desactivado</span>
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td>Conexión actual</td>
+        <td>{{ 'Cifrada (https)' if https_en_uso else 'Sin cifrar (http)' }}</td>
+      </tr>
+    </table>
+
+    {% if not https_activo %}
+      <p class="hint">
+        Ahora mismo la contraseña y la sesión viajan en claro por la red.
+        Activarlo crea un certificado propio para la red local y te lo da para
+        instalarlo en el PC y en el móvil. El servidor sigue por HTTP hasta que
+        lo reinicies, así que tienes tiempo de instalarlo antes.
+      </p>
+      <form method="post" class="form-box form-box-wide">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="accion" value="activar_https">
+        <label>Direcciones por las que se entra a este servidor
+          <input type="text" name="nombres_https" value="{{ nombres_sugeridos }}">
+        </label>
+        <p class="hint">
+          Separadas por espacios: la IP del servidor, su nombre de red, y
+          cualquier otra por la que entres.
+        </p>
+        <button type="submit" class="btn">Activar HTTPS y crear el certificado</button>
+      </form>
+    {% else %}
+      <p>
+        <a class="btn" href="{{ url_for('admin_https') }}">Certificados e instrucciones de instalación</a>
+      </p>
+      <form method="post" data-confirm="¿Desactivar el HTTPS? Habrá que reiniciar el servidor y volverá a ir por HTTP sin cifrar.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="accion" value="desactivar_https">
+        <button type="submit" class="btn btn-small btn-danger">Desactivar HTTPS</button>
+      </form>
+    {% endif %}
+  </section>
+
+  {# ── Ajustes numéricos ──────────────────────────────────────────────── #}
+  <form method="post" class="page-centered">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="accion" value="guardar">
+
+    {% for grupo in grupos %}
+      <section>
+        <h2>{{ grupo }}</h2>
+        <div class="form-box form-box-wide">
+          {% for campo in campos if campo.grupo == grupo %}
+            <label>{{ campo.etiqueta }}
+              <input type="number" name="{{ campo.clave }}" value="{{ campo.valor }}"
+                     {% if campo.minimo is defined %}min="{{ campo.minimo }}"{% endif %}
+                     {% if campo.maximo is defined %}max="{{ campo.maximo }}"{% endif %}
+                     {% if campo.bloqueado %}disabled{% endif %}>
+            </label>
+            <p class="hint">
+              {{ campo.ayuda }}
+              {% if campo.bloqueado %}
+                <br><strong>Fijado en .env ({{ campo.env }}).</strong> Mientras esa
+                variable exista, manda sobre lo que se guarde aquí; por eso el
+                campo está bloqueado en vez de dejarte guardar algo que se
+                ignoraría. Quítala de .env y reinicia para poder cambiarlo desde
+                aquí.
+              {% elif campo.origen == 'fábrica' %}
+                <br><span class="origen">Valor de fábrica.</span>
+              {% endif %}
+            </p>
+          {% endfor %}
+        </div>
+      </section>
+    {% endfor %}
+
+    <p>
+      <button type="submit" class="btn">Guardar ajustes</button>
+    </p>
+  </form>
+
+  <section class="page-centered">
+    <form method="post" data-confirm="¿Restablecer todos los ajustes a los valores de fábrica?">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="accion" value="restablecer">
+      <button type="submit" class="btn btn-small">Restablecer valores de fábrica</button>
+    </form>
+    <p class="hint">
+      Borra lo guardado aquí y vuelve a los valores de <code>config.ini</code>.
+      No toca el HTTPS ni los certificados.
+    </p>
+  </section>
+
+  <div class="page-centered">
+    <p><a class="btn btn-small" href="{{ url_for('admin') }}">Volver a Administración</a></p>
+  </div>
+{% endblock %}

@@ -141,32 +141,6 @@ if [ ! -f .env ]; then
     error "No hay .env. Esto es una instalación nueva: usa ./docker-up.sh."
     exit 1
 fi
-
-# El volumen pasó a llamarse httpWebServer. Cambiar el nombre en
-# docker-compose.yml no mueve nada: Docker crearía uno nuevo y vacío y el
-# servidor arrancaría como recién instalado, con los datos intactos pero
-# invisibles en el volumen viejo. Es un susto innecesario y se detecta antes.
-comprobar_volumen_antiguo() {
-    antiguo=$(docker volume ls -q 2>/dev/null | grep -E '(^|_)ftp_data$' | head -n 1 || true)
-    [ -n "$antiguo" ] || return 0
-    docker volume inspect httpWebServer >/dev/null 2>&1 && return 0
-
-    printf '\n\033[31m%s\033[0m\n' "Tus datos siguen en el volumen antiguo ($antiguo)." >&2
-    cat >&2 <<'FIN'
-
-  El volumen pasó a llamarse httpWebServer, y renombrarlo no mueve los datos:
-  si se arranca ahora, el servidor saldría vacío, como recién instalado. Tus
-  archivos y tu base de datos NO se han perdido, siguen en el volumen de antes.
-
-  Para moverlos (no borra nada, deja el antiguo como copia):
-
-      ./migrar-volumen.sh
-
-FIN
-    exit 1
-}
-comprobar_volumen_antiguo
-
 # `config.ini` se distribuye con el código, así que editarlo en el servidor
 # choca con cada actualización. El puerto tiene su variable de entorno, y ese es
 # el canal que sobrevive a los pulls.

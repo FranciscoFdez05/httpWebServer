@@ -549,3 +549,15 @@ section + section { margin-top: 2.5rem; }
   opacity: 0.65;
   margin-right: 0.75rem;
 }
+
+/* En la pantalla de Ajustes, de dónde sale cada valor. Discreto: solo importa
+   cuando alguien se pregunta por qué un campo dice lo que dice. */
+.origen {
+  opacity: 0.7;
+  font-style: italic;
+}
+
+.form-box input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

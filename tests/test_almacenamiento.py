@@ -56,7 +56,10 @@ def test_reserva_de_disco(crear_app, monkeypatch):
 
 def test_limite_de_subida_devuelve_413(crear_app):
     modulo = crear_app(MAX_UPLOAD_MB=1)
-    assert modulo.app.config["MAX_CONTENT_LENGTH"] == 1024 * 1024
+    # El límite se lee en cada petición (se cambia desde Ajustes), no al
+    # arrancar: por eso se comprueba la función y no app.config, que solo tiene
+    # valor una vez que una petición lo ha sincronizado.
+    assert modulo.limite_subida_mb() == 1
 
     crear_usuario(modulo, "ana", "contrasena-larga")
     cliente = modulo.app.test_client()

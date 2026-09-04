@@ -28,8 +28,19 @@ Primera versión publicada.
   contraseñas y se eliminan cuentas; los usuarios nuevos deben cambiar su
   contraseña al entrar por primera vez.
 
+### Ajustes
+- Pantalla de **Ajustes** enlazada desde la barra superior: límites de subida,
+  cuota por usuario, reserva de disco, política de contraseñas, bloqueo por
+  intentos fallidos, y el interruptor del HTTPS. Se aplican al momento, sin
+  reiniciar.
+- Lo guardado vive en el volumen de datos: `config.ini` se monta en solo
+  lectura y `.env` no está dentro del contenedor. Los valores se leen en cada
+  petición para que todos los workers de gunicorn vean el mismo.
+- Precedencia `.env` > Ajustes > `config.ini`. Un ajuste fijado en `.env` sale
+  bloqueado en la pantalla, en vez de dejar guardar algo que se ignoraría.
+
 ### HTTPS en la red local
-- Activable desde **Administración → HTTPS**, desactivado por defecto. Crea una
+- Se activa y desactiva desde **Ajustes**, desactivado por defecto. Crea una
   autoridad certificadora propia y firma con ella el certificado del servidor,
   y ofrece la CA para descargar e instalar en PC y móvil con las instrucciones
   de cada sistema.
@@ -71,10 +82,6 @@ Primera versión publicada.
 - Imágenes etiquetadas por versión (`httpwebserver:<version>`, en minúsculas
   porque Docker lo exige), que es lo que hace posible volver atrás en segundos
   en vez de reconstruyendo. El contenedor y el volumen se llaman `httpWebServer`.
-- `migrar-volumen.sh`: mueve los datos del volumen antiguo (`ftp_data`) al
-  nuevo. Renombrar un volumen no mueve nada por sí solo, así que sin esto una
-  instalación anterior arrancaría vacía. No borra el volumen viejo, y
-  `docker-up.sh` y `docker-update.sh` se paran y avisan si falta la migración.
 - El número de versión se muestra en el pie de todas las páginas.
 - Endpoint `/api/health`: comprueba la base de datos y que el directorio de
   subidas sea escribible. Devuelve 503 si algo falla.

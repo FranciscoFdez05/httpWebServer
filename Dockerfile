@@ -5,7 +5,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py tls.py healthcheck.py config.ini ./
+COPY app.py ajustes.py tls.py healthcheck.py config.ini ./
 COPY templates/ templates/
 COPY static/ static/
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

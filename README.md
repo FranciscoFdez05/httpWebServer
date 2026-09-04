@@ -125,7 +125,18 @@ Quien no ha iniciado sesión solo ve los archivos marcados como públicos.
 
 ### ⚙️ Configuración
 
-Hay dos ficheros y la diferencia importa:
+Lo habitual es no tocar ningún fichero: entra como administrador y ve a
+**Ajustes** en la barra superior. Ahí se cambian los límites de subida, la
+política de contraseñas y el bloqueo por intentos fallidos, y se activa o
+desactiva el **HTTPS**. Los cambios se aplican al momento, sin reiniciar (la
+excepción es el HTTPS, que se activa al arrancar).
+
+Lo que guardas ahí vive en el volumen de datos, porque es el único sitio donde
+el contenedor puede escribir: `config.ini` se monta en solo lectura y `.env` ni
+siquiera está dentro del contenedor.
+
+Para lo que no se puede cambiar en caliente (el puerto, la clave de sesión, si
+hay un proxy delante) hay dos ficheros, y la diferencia importa:
 
 - **`config.ini`** son los **valores de fábrica**. Viaja con el código y se
   actualiza con él, así que editarlo en un servidor hace que cada `git pull` dé
@@ -134,6 +145,15 @@ Hay dos ficheros y la diferencia importa:
 - **`.env`** es la configuración de **tu instalación**. No se versiona, así que
   sobrevive a las actualizaciones, y **siempre manda** sobre `config.ini`. Es
   aquí donde se configura un servidor real. Ver [`.env.example`](.env.example).
+
+El orden de precedencia, de más fuerte a más débil, es:
+
+**`.env` → Ajustes de la web → `config.ini`**
+
+`.env` gana a propósito: es la configuración de la máquina, y quien la pone no
+quiere que se la cambien desde el navegador. Un ajuste fijado ahí sale
+**bloqueado** en la pantalla de Ajustes, diciendo por qué, en vez de dejarte
+guardar un valor que luego se ignoraría.
 
 Los ajustes principales:
 
@@ -146,6 +166,7 @@ Los ajustes principales:
 | Cuota por usuario | `USER_QUOTA_MB` | `0` (sin cuota) | Repartir el disco |
 | Reserva de disco | `MIN_FREE_DISK_MB` | `1024` | Que el volumen no se llene del todo |
 | Longitud mínima de contraseña | `MIN_PASSWORD_LENGTH` | `12` | Política de contraseñas |
+| *(los cuatro anteriores se cambian mejor desde **Ajustes**)* | | | |
 | Forzar HTTP | `HTTPS_ENABLED` | (sin fijar) | `false` recupera el arranque si un certificado falla |
 | Intentos antes de bloquear | `LOGIN_MAX_ATTEMPTS` | `10` | Frenar la fuerza bruta |
 
@@ -153,24 +174,6 @@ Los ajustes principales:
 (`/data/uploads` para los archivos, `/data/app.db` para la base de datos y
 `/data/backups` para las copias previas a cada actualización). Sobrevive a
 `docker compose down` y a reconstruir la imagen.
-
-### ♻️ Si vienes de una instalación anterior
-
-El volumen de datos se llamaba `ftp_data` y ahora se llama `httpWebServer`.
-**Renombrarlo no mueve nada**: Docker se limita a crear un volumen nuevo y
-vacío, así que el servidor arrancaría como recién instalado. Tus archivos no se
-pierden —siguen en el volumen viejo— pero el susto es real.
-
-Antes de nada, una sola vez:
-
-```bash
-./migrar-volumen.sh
-```
-
-Copia los datos al volumen nuevo y **no borra el antiguo**, que se queda como
-copia de seguridad hasta que compruebes que todo está en su sitio. `docker-up.sh`
-y `docker-update.sh` se paran y avisan si detectan que falta esta migración, así
-que no puedes arrancar vacío por descuido.
 
 ### 🔄 Actualizar una instalación en marcha
 
@@ -203,7 +206,6 @@ curl -k https://localhost:8000/api/health  # ¿responde? (-k si el HTTPS es prop
 docker compose down                   # parar (sin borrar datos)
 ./docker-up.sh                        # instalación nueva: construir y levantar
 ./docker-update.sh                    # instalación existente: actualizar
-./migrar-volumen.sh                   # una vez, si vienes del volumen ftp_data
 docker volume ls | grep httpWebServer # dónde viven los datos
 python -m pytest -q                   # tests (pip install -r requirements-dev.txt)
 ```
@@ -215,7 +217,7 @@ sirve Let's Encrypt: no emite certificados para direcciones como
 `192.168.1.50`. La solución es una autoridad certificadora propia, y el
 servidor la crea y la reparte por ti.
 
-1. Entra como administrador en **Administración → 🔒 HTTPS y certificados**.
+1. Entra como administrador y pulsa **Ajustes** en la barra superior.
 2. Revisa las direcciones que debe cubrir el certificado (viene rellenado con
    la que estás usando y las IPs del servidor) y pulsa **Crear certificado**.
 3. **Descarga `ca.crt` e instálalo** en cada PC y móvil. La página trae las

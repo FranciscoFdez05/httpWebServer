@@ -29,6 +29,7 @@ from werkzeug.utils import secure_filename
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
 
+import ajustes
 import tls
 
 # Versión del código. Es la única fuente: docker-update.sh la lee de aquí
@@ -117,15 +118,33 @@ def ajuste_bool(seccion, clave, env, defecto):
 
 SERVER_PORT = ajuste_int("server", "port", "PORT", 8000)
 
-# ── Límites de subida ─────────────────────────────────────────────────────────
-# 0 = sin límite en los dos primeros, que es el comportamiento histórico y sigue
-# siendo razonable en una LAN de confianza. Lo que NO es opcional es la reserva
-# de disco: sin ella cualquier usuario autenticado podía llenar el volumen hasta
-# que la base de datos dejaba de poder escribir, y con ella el servicio sigue
-# funcionando aunque alguien se pase subiendo.
-MAX_UPLOAD_MB = ajuste_int("server", "max_upload_mb", "MAX_UPLOAD_MB", 0)
-USER_QUOTA_MB = ajuste_int("server", "user_quota_mb", "USER_QUOTA_MB", 0)
-MIN_FREE_DISK_MB = ajuste_int("server", "min_free_disk_mb", "MIN_FREE_DISK_MB", 1024)
+# ── Ajustes que se cambian desde la web ───────────────────────────────────────
+# Límites de subida y política de acceso viven en ajustes.py y se leen en cada
+# petición, no aquí: son los que el administrador puede cambiar desde
+# Administración → Ajustes, y un valor capturado al arrancar dejaría a cada
+# worker de gunicorn con una copia distinta según cuándo se guardó el cambio.
+def limite_subida_mb():
+    return ajustes.valor("max_upload_mb", DATA_DIR)
+
+
+def cuota_usuario_mb():
+    return ajustes.valor("user_quota_mb", DATA_DIR)
+
+
+def disco_reservado_mb():
+    return ajustes.valor("min_free_disk_mb", DATA_DIR)
+
+
+def longitud_minima_password():
+    return ajustes.valor("min_password_length", DATA_DIR)
+
+
+def intentos_maximos_login():
+    return ajustes.valor("login_max_attempts", DATA_DIR)
+
+
+def ventana_login_minutos():
+    return ajustes.valor("login_window_minutes", DATA_DIR)
 
 # ── Seguridad ─────────────────────────────────────────────────────────────────
 # behind_proxy activa dos cosas que solo son correctas detrás de un proxy con
@@ -152,9 +171,6 @@ SECURE_COOKIES = (
     else _secure_cookies in ("1", "true", "yes", "on", "si", "sí")
 )
 
-MIN_PASSWORD_LENGTH = ajuste_int("security", "min_password_length", "MIN_PASSWORD_LENGTH", 12)
-LOGIN_MAX_ATTEMPTS = ajuste_int("security", "login_max_attempts", "LOGIN_MAX_ATTEMPTS", 10)
-LOGIN_WINDOW_MINUTES = ajuste_int("security", "login_window_minutes", "LOGIN_WINDOW_MINUTES", 15)
 
 # Segundos que una petición espera a que se libere la base de datos antes de
 # rendirse. Con subidas grandes y varios workers, 5 s (el valor por defecto de
@@ -186,7 +202,6 @@ app.secret_key = _secret_key
 if BEHIND_PROXY:
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
-app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024 if MAX_UPLOAD_MB > 0 else None
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 app.config["REMEMBER_COOKIE_DURATION"] = timedelta(days=30)
 # La cookie de sesión y la de "recuérdame" no las necesita nunca JavaScript, y
@@ -224,6 +239,12 @@ csrf = CSRFProtect(app)
 def make_session_permanent():
     session.permanent = True
     g.request_started_at = time.monotonic()
+    # Se sincroniza aquí y no al arrancar porque el límite se cambia desde la
+    # web: Werkzeug lo consulta al parsear el cuerpo de la petición, que ocurre
+    # después de este gancho, así que cambiarlo ahora ya cuenta para esta misma
+    # subida y para todos los workers por igual.
+    mb = limite_subida_mb()
+    app.config["MAX_CONTENT_LENGTH"] = mb * 1024 * 1024 if mb > 0 else None
 
 
 @app.after_request
@@ -293,7 +314,7 @@ def upload_demasiado_grande(error):
     # Sin este manejador, pasarse del límite devuelve la página de error cruda
     # de Werkzeug a mitad de subida y el usuario no llega a saber por qué.
     flash(
-        f"El archivo supera el límite de subida ({MAX_UPLOAD_MB} MB por petición).",
+        f"El archivo supera el límite de subida ({limite_subida_mb()} MB por petición).",
         "error",
     )
     return redirect(url_for("upload" if current_user.is_authenticated else "index")), 413
@@ -446,8 +467,9 @@ CONTRASENAS_COMUNES = {
 
 def validar_password(password, username=""):
     """Devuelve el motivo del rechazo, o None si la contraseña es aceptable."""
-    if len(password) < MIN_PASSWORD_LENGTH:
-        return f"La contraseña debe tener al menos {MIN_PASSWORD_LENGTH} caracteres."
+    minimo = longitud_minima_password()
+    if len(password) < minimo:
+        return f"La contraseña debe tener al menos {minimo} caracteres."
     if password.lower() in CONTRASENAS_COMUNES:
         return "Esa contraseña es de las primeras que prueba cualquier ataque. Elige otra."
     if username and password.lower() == username.lower():
@@ -469,7 +491,8 @@ def segundos_de_bloqueo(ip):
     contraseña unas cuantas veces.
     """
     db = get_db()
-    limite = (ahora() - timedelta(minutes=LOGIN_WINDOW_MINUTES)).isoformat()
+    ventana = ventana_login_minutos()
+    limite = (ahora() - timedelta(minutes=ventana)).isoformat()
     # Los intentos fuera de la ventana ya no cuentan para nada: se borran aquí
     # y así la tabla no crece sin fin sin necesidad de una tarea aparte.
     db.execute("DELETE FROM login_attempts WHERE attempted_at < ?", (limite,))
@@ -478,14 +501,14 @@ def segundos_de_bloqueo(ip):
         "SELECT attempted_at FROM login_attempts WHERE ip = ? ORDER BY attempted_at",
         (ip,),
     ).fetchall()
-    if len(filas) < LOGIN_MAX_ATTEMPTS:
+    if len(filas) < intentos_maximos_login():
         return 0
     # El bloqueo se levanta cuando el intento más antiguo salga de la ventana.
     try:
         mas_antiguo = datetime.fromisoformat(filas[0]["attempted_at"])
     except ValueError:
         return 0
-    libre_en = mas_antiguo + timedelta(minutes=LOGIN_WINDOW_MINUTES)
+    libre_en = mas_antiguo + timedelta(minutes=ventana)
     return max(0, int((libre_en - ahora()).total_seconds()))
 
 
@@ -674,7 +697,7 @@ def template_helpers():
         human_size=human_size,
         is_previewable=is_previewable,
         supports_metadata_removal=supports_metadata_removal,
-        min_password_length=MIN_PASSWORD_LENGTH,
+        min_password_length=longitud_minima_password(),
         # Se pinta en el pie de todas las páginas. Saber a simple vista qué
         # versión está sirviendo evita la duda de si una actualización llegó a
         # aplicarse, sin tener que entrar al servidor a mirarlo.
@@ -779,7 +802,8 @@ def upload():
         # que empezar a escribir y dejar el volumen sin sitio ni para que la
         # base de datos pueda registrar lo que acaba de pasar.
         libre = espacio_libre_mb()
-        if libre is not None and libre <= MIN_FREE_DISK_MB:
+        reserva = disco_reservado_mb()
+        if libre is not None and libre <= reserva:
             log.error("Subida rechazada: solo quedan %s MB libres", libre)
             flash(
                 "No hay espacio suficiente en el servidor. Avisa al administrador.",
@@ -807,20 +831,21 @@ def upload():
             # se han pasado. Deshacerlo es lo que evita que un rechazo deje
             # basura ocupando sitio.
             libre = espacio_libre_mb()
-            if libre is not None and libre <= MIN_FREE_DISK_MB:
+            if libre is not None and libre <= reserva:
                 borrar_de_disco(stored_name)
                 interrumpido = (
                     f"«{original_name}» no cabe: el servidor debe mantener "
-                    f"{MIN_FREE_DISK_MB} MB libres."
+                    f"{reserva} MB libres."
                 )
                 break
 
-            if USER_QUOTA_MB > 0:
+            cuota = cuota_usuario_mb()
+            if cuota > 0:
                 usado = uso_del_usuario_mb(current_user.id) + size_bytes / (1024 * 1024)
-                if usado > USER_QUOTA_MB:
+                if usado > cuota:
                     borrar_de_disco(stored_name)
                     interrumpido = (
-                        f"«{original_name}» supera tu cuota de {USER_QUOTA_MB} MB. "
+                        f"«{original_name}» supera tu cuota de {cuota} MB. "
                         "Borra algún archivo antes de subir más."
                     )
                     break
@@ -1208,6 +1233,100 @@ def descargar_ca():
     respuesta.headers["Content-Disposition"] = 'inline; filename="servidor-archivos-ca.crt"'
     respuesta.headers["Cache-Control"] = "no-store"
     return respuesta
+
+
+@app.route("/admin/ajustes", methods=["GET", "POST"])
+@login_required
+def admin_ajustes():
+    """Los ajustes que se pueden cambiar sin entrar al servidor.
+
+    Lo que se guarda va al volumen de datos, no a config.ini ni a .env: el
+    primero se monta en solo lectura y el segundo ni siquiera está dentro del
+    contenedor, así que son los dos únicos sitios donde la aplicación NO puede
+    escribir.
+    """
+    if not current_user.is_admin:
+        abort(403)
+
+    if request.method == "POST":
+        accion = request.form.get("accion", "guardar")
+
+        if accion == "restablecer":
+            ajustes.restablecer(DATA_DIR)
+            flash("Ajustes restablecidos a los valores de fábrica.", "success")
+            return redirect(url_for("admin_ajustes"))
+
+        if accion in ("activar_https", "desactivar_https"):
+            try:
+                if accion == "activar_https":
+                    nombres = [request.host]
+                    nombres += request.form.get("nombres_https", "").replace(",", " ").split()
+                    estado = tls.activar(DATA_DIR, nombres)
+                    log.info("HTTPS activado; el certificado cubre %s", estado["nombres"])
+                    flash(
+                        "HTTPS preparado. Ahora descarga el certificado, instálalo "
+                        "en tus dispositivos y reinicia el servidor.",
+                        "success",
+                    )
+                    return redirect(url_for("admin_https"))
+                tls.desactivar(DATA_DIR)
+                flash(
+                    "HTTPS desactivado. Reinicia el servidor para volver a HTTP. "
+                    "Los certificados se conservan por si lo reactivas.",
+                    "success",
+                )
+            except Exception as exc:
+                log.exception("Fallo al cambiar el estado del HTTPS")
+                flash(f"No se pudo cambiar el HTTPS: {exc}", "error")
+            return redirect(url_for("admin_ajustes"))
+
+        # Guardar los valores numéricos. Se validan TODOS antes de escribir
+        # nada: guardar la mitad dejaría una configuración a medias y el
+        # usuario no sabría cuál se aplicó y cuál no.
+        cambios = {}
+        errores = []
+        for clave, definicion in ajustes.DEFINICIONES.items():
+            if ajustes.fijado_en_entorno(clave):
+                continue      # el campo va bloqueado; ni se mira lo que llegue
+            if clave not in request.form:
+                continue
+            numero, error = ajustes.validar(clave, request.form[clave])
+            if error:
+                errores.append(error)
+            else:
+                cambios[clave] = numero
+
+        if errores:
+            for error in errores:
+                flash(error, "error")
+        elif cambios:
+            ajustes.guardar(DATA_DIR, cambios)
+            log.info("Ajustes actualizados: %s", cambios)
+            flash("Ajustes guardados. Se aplican al momento.", "success")
+        return redirect(url_for("admin_ajustes"))
+
+    estado_tls = tls.estado(DATA_DIR)
+    campos = []
+    for clave, definicion in ajustes.DEFINICIONES.items():
+        campos.append({
+            "clave": clave,
+            "valor": ajustes.valor(clave, DATA_DIR),
+            "origen": ajustes.origen(clave, DATA_DIR),
+            "bloqueado": ajustes.fijado_en_entorno(clave),
+            **definicion,
+        })
+
+    return render_template(
+        "ajustes.html",
+        grupos=ajustes.GRUPOS,
+        campos=campos,
+        estado_tls=estado_tls,
+        https_activo=HTTPS_ACTIVO,
+        https_en_uso=request.is_secure,
+        nombres_sugeridos=" ".join(
+            dict.fromkeys([request.host] + tls.nombres_del_sistema())
+        ),
+    )
 
 
 @app.route("/admin/https", methods=["GET", "POST"])

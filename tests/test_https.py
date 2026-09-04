@@ -369,3 +369,25 @@ def test_un_cliente_sin_la_ca_es_rechazado(datos):
             with cliente.wrap_socket(crudo, server_hostname="127.0.0.1"):
                 pass
     escucha.close()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows no aplica permisos POSIX")
+def test_el_directorio_de_certificados_no_es_legible_por_otros(datos):
+    """El Dockerfile deja /data/tls en 700, pero eso solo llega al volumen la
+    primera vez que Docker lo crea. En una instalación que ya tenía datos lo
+    acaba creando os.makedirs, y tiene que quedar igual."""
+    tls.activar(datos, ["192.168.1.50"])
+    modo = os.stat(tls.rutas(datos)["dir"]).st_mode & 0o777
+    assert modo == 0o700, f"/data/tls tiene permisos {oct(modo)}"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows no aplica permisos POSIX")
+def test_un_directorio_preexistente_se_corrige(datos):
+    """El caso real: el volumen viene de una versión anterior y el directorio
+    ya está creado con permisos abiertos."""
+    ruta_dir = tls.rutas(datos)["dir"]
+    os.makedirs(ruta_dir, exist_ok=True)
+    os.chmod(ruta_dir, 0o755)
+
+    tls.activar(datos, ["192.168.1.50"])
+    assert os.stat(ruta_dir).st_mode & 0o777 == 0o700

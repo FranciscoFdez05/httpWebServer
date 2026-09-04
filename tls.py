@@ -132,10 +132,31 @@ def _guardar_certificado(ruta, certificado):
         f.write(certificado.public_bytes(serialization.Encoding.PEM))
 
 
+def _asegurar_directorio(data_dir):
+    """Crea /data/tls con permisos 700.
+
+    El Dockerfile ya lo deja en 700, pero eso solo llega al volumen la PRIMERA
+    vez que Docker lo crea: en una instalación que ya tenía datos, el volumen
+    no está vacío y Docker no copia nada, así que el directorio lo acaba
+    creando os.makedirs con los permisos por defecto (0755). Las claves se
+    escriben igualmente con 0600, pero el directorio que las contiene debe
+    decir lo mismo que dice el Dockerfile.
+    """
+    ruta_dir = rutas(data_dir)["dir"]
+    os.makedirs(ruta_dir, mode=0o700, exist_ok=True)
+    try:
+        # makedirs ignora `mode` si el directorio ya existía, y el umask puede
+        # haber recortado el de recién creado: se fija explícitamente.
+        os.chmod(ruta_dir, 0o700)
+    except OSError:
+        pass  # en Windows no aplica; el aviso no aportaría nada
+    return ruta_dir
+
+
 def generar_ca(data_dir):
     """Crea la autoridad certificadora. Solo se hace una vez."""
     r = rutas(data_dir)
-    os.makedirs(r["dir"], exist_ok=True)
+    _asegurar_directorio(data_dir)
 
     clave = rsa.generate_private_key(public_exponent=65537, key_size=4096)
     sujeto = x509.Name([
@@ -314,7 +335,7 @@ def cubre(data_dir, host):
 def activar(data_dir, nombres):
     """Genera lo que falte y deja el HTTPS marcado para el próximo arranque."""
     r = rutas(data_dir)
-    os.makedirs(r["dir"], exist_ok=True)
+    _asegurar_directorio(data_dir)
     if not (os.path.exists(r["ca_crt"]) and os.path.exists(r["ca_key"])):
         generar_ca(data_dir)
     generar_certificado_servidor(data_dir, nombres)

@@ -83,7 +83,7 @@ def test_el_puerto_del_entorno_manda_sobre_config_ini(crear_app, monkeypatch):
 def test_un_ajuste_no_numerico_no_tumba_el_arranque(crear_app, monkeypatch):
     monkeypatch.setenv("MIN_FREE_DISK_MB", "esto-no-es-un-numero")
     modulo = crear_app()
-    assert modulo.MIN_FREE_DISK_MB == 1024
+    assert modulo.disco_reservado_mb() == 1024
 
 
 def test_sqlite_en_modo_wal(modulo):
@@ -129,61 +129,42 @@ def test_el_nombre_de_la_imagen_es_valido_para_docker():
         f"nombre de imagen no válido para Docker: {imagen}"
 
 
-def test_el_volumen_del_compose_y_el_de_los_scripts_coinciden():
-    """El volumen se renombró de ftp_data a httpWebServer. Los scripts detectan
-    el volumen antiguo para no arrancar con uno nuevo y vacío; si el nombre
-    nuevo se cambiara aquí y no allí, la detección dejaría de protegerte."""
+def test_el_volumen_de_datos_se_llama_httpwebserver():
+    """El nombre explícito importa: sin `name:`, Compose le antepone el del
+    proyecto y el volumen pasaría a llamarse httpwebserver_httpWebServer. Ese
+    cambio de nombre crearía un volumen nuevo y vacío, con los datos intactos
+    pero invisibles en el anterior."""
     import re
     raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
     with open(os.path.join(raiz, "docker-compose.yml"), encoding="utf-8") as f:
         compose = f.read()
-    assert re.search(r"^\s+name:\s*httpWebServer\s*$", compose, re.MULTILINE), \
-        "el volumen del compose debe llamarse httpWebServer"
+    assert re.search(r"^\s+name:\s*httpWebServer\s*$", compose, re.MULTILINE), (
+        "el volumen debe declarar name: httpWebServer"
+    )
     assert "- httpWebServer:/data" in compose
 
-    for script in ("docker-up.sh", "docker-update.sh"):
-        with open(os.path.join(raiz, script), encoding="utf-8") as f:
-            contenido = f.read()
-        assert "docker volume inspect httpWebServer" in contenido, \
-            f"{script} no comprueba el volumen nuevo"
-        assert "ftp_data" in contenido, \
-            f"{script} no detecta el volumen antiguo"
-        assert "migrar-volumen.sh" in contenido, \
-            f"{script} no dice cómo migrar"
 
-
-def test_el_script_de_migracion_no_borra_el_volumen_antiguo():
-    """Es la red de seguridad entera: mientras el volumen antiguo exista, la
-    migración es reversible. El script solo puede EXPLICAR cómo borrarlo.
-
-    Se descuentan los comentarios, los heredoc y los echo: ahí «docker volume
-    rm» es texto dirigido al usuario, no una orden que el script ejecute.
-    """
+def test_la_imagen_incluye_todos_los_modulos_locales():
+    """Un módulo que app.py importa pero que el Dockerfile no copia hace que el
+    contenedor muera al arrancar con un ImportError. En local no se nota,
+    porque el fichero está ahí; solo se ve al construir la imagen."""
     import re
     raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    with open(os.path.join(raiz, "migrar-volumen.sh"), encoding="utf-8") as f:
-        lineas = f.read().splitlines()
 
-    ejecutable = []
-    terminador = None
-    for linea in lineas:
-        if terminador is not None:
-            if linea.strip() == terminador:
-                terminador = None
-            continue                      # cuerpo de un heredoc: es texto
-        apertura = re.search(r"<<-?'?([A-Za-z_][A-Za-z0-9_]*)'?", linea)
-        if apertura:
-            terminador = apertura.group(1)
-        limpia = linea.strip()
-        if not limpia or limpia.startswith("#") or limpia.startswith("echo "):
-            continue
-        ejecutable.append(limpia)
+    with open(os.path.join(raiz, "app.py"), encoding="utf-8") as f:
+        codigo = f.read()
+    with open(os.path.join(raiz, "Dockerfile"), encoding="utf-8") as f:
+        dockerfile = f.read()
 
-    for linea in ejecutable:
-        assert "volume rm" not in linea, (
-            f"el script no debe ejecutar un borrado de volumen: {linea}"
-        )
+    # Los import de una sola palabra que además existen como .py en la raíz son
+    # módulos del proyecto; el resto vienen de requirements.txt.
+    importados = re.findall(r"^import ([a-z_][a-z0-9_]*)$", codigo, re.MULTILINE)
+    locales = [
+        m for m in importados
+        if os.path.exists(os.path.join(raiz, m + ".py"))
+    ]
+    assert locales, "se esperaba al menos un módulo local"
 
-    # Y debe seguir diciendo al usuario cómo borrarlo él, cuando lo compruebe.
-    assert "docker volume rm $ANTIGUO" in "\n".join(lineas)
+    for modulo in locales:
+        assert f"{modulo}.py" in dockerfile, \
+            f"app.py importa {modulo}, pero el Dockerfile no copia {modulo}.py"

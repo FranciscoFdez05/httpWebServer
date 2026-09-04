@@ -53,12 +53,6 @@ services:
     volumes:
       # Contiene uploads, app.db, secret_key y tls/ (los certificados y la
       # clave de la CA). Es lo único que hay que respaldar.
-      #
-      # OJO si vienes de una instalación con el volumen antiguo (ftp_data):
-      # cambiar este nombre NO mueve nada. Docker crea un volumen nuevo y vacío
-      # y deja los archivos y la base de datos en el viejo, así que el servidor
-      # arrancaría como recién instalado. Para moverlos: ./migrar-volumen.sh
-      # (docker-up.sh y docker-update.sh se paran y avisan si detectan el caso).
       - httpWebServer:/data
       # Monta config.ini para poder cambiar los valores de fábrica sin
       # reconstruir la imagen. Para configurar una instalación concreta usa
