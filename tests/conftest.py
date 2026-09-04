@@ -53,7 +53,7 @@ def crear_usuario(modulo, username, password, admin=False):
 
 
 AJUSTES_POR_TEST = (
-    "MAX_UPLOAD_MB", "USER_QUOTA_MB", "MIN_FREE_DISK_MB",
+    "MAX_UPLOAD_MB", "USER_QUOTA_MB", "MIN_FREE_DISK_MB", "LAN_SIN_LIMITE",
     "LOGIN_MAX_ATTEMPTS", "LOGIN_WINDOW_MINUTES",
     "MIN_PASSWORD_LENGTH", "BEHIND_PROXY", "SECURE_COOKIES",
 )
@@ -100,7 +100,10 @@ def entrar(cliente, username, password):
     )
 
 
-def subir(cliente, nombre, contenido=b"contenido", visibility="private_me", compartir=()):
+def subir(cliente, nombre, contenido=b"contenido", visibility="private_me",
+          compartir=(), desde=None):
+    """`desde` fija la IP de origen: el límite de tamaño solo se aplica fuera
+    de la LAN, y el cliente de pruebas es 127.0.0.1 (o sea, LAN)."""
     import io as _io
 
     datos = {
@@ -109,6 +112,8 @@ def subir(cliente, nombre, contenido=b"contenido", visibility="private_me", comp
     }
     if compartir:
         datos["shared_users"] = [str(u) for u in compartir]
+    extra = {"environ_base": {"REMOTE_ADDR": desde}} if desde else {}
     return cliente.post(
-        "/upload", data=datos, content_type="multipart/form-data", follow_redirects=False
+        "/upload", data=datos, content_type="multipart/form-data",
+        follow_redirects=False, **extra
     )

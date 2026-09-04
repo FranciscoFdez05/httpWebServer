@@ -17,11 +17,14 @@ con un solo comando gracias a Docker.
 - 👁️ **Permisos por archivo**: público (descargable sin iniciar sesión), privado
   solo para ti, o privado compartido con una lista concreta de usuarios. Se puede
   cambiar en cualquier momento desde la vista de permisos.
-- 📤 **Subidas sin límite de tamaño** por defecto: el tope real lo pone tu disco.
-  Se pueden subir varios archivos a la vez. Si lo expones fuera de la LAN puedes
-  poner un límite por subida y una cuota por usuario (`MAX_UPLOAD_MB`,
-  `USER_QUOTA_MB`), y el servidor reserva siempre un margen de disco libre para
-  que nadie pueda dejarlo inservible llenándolo.
+- 📤 **Subidas sin límite de tamaño ni de tiempo** por defecto: el tope real lo
+  pone tu disco. Se pueden subir varios archivos a la vez. Si lo expones fuera
+  de la LAN puedes poner un límite por subida y una cuota por usuario
+  (`MAX_UPLOAD_MB`, `USER_QUOTA_MB`) —y ese límite **no se aplica dentro de la
+  red local**, que es donde no protege de nada—, y el servidor reserva siempre
+  un margen de disco libre para que nadie pueda dejarlo inservible llenándolo.
+  Cada archivo se escribe en el disco una sola vez, sin el temporal intermedio
+  y la copia que hace por defecto la biblioteca web.
 - 🔍 **Vista previa en el navegador** de imágenes, PDF, audio, vídeo y texto,
   sin tener que descargar nada. La lista de tipos permitidos es una allowlist
   explícita, para que no se pueda ejecutar HTML o SVG malicioso.
@@ -163,10 +166,11 @@ Los ajustes principales:
 | Clave de sesión | `SECRET_KEY` | (se genera) | Firma cookies y tokens CSRF |
 | Proxy con TLS delante | `BEHIND_PROXY` | `false` | Cookies `Secure` + IP real del cliente |
 | Límite por subida | `MAX_UPLOAD_MB` | `0` (sin límite) | Frenar subidas enormes |
+| Sin límite en la LAN | `LAN_SIN_LIMITE` | `true` | El límite por subida solo se aplica desde fuera |
 | Cuota por usuario | `USER_QUOTA_MB` | `0` (sin cuota) | Repartir el disco |
 | Reserva de disco | `MIN_FREE_DISK_MB` | `1024` | Que el volumen no se llene del todo |
 | Longitud mínima de contraseña | `MIN_PASSWORD_LENGTH` | `12` | Política de contraseñas |
-| *(los cuatro anteriores se cambian mejor desde **Ajustes**)* | | | |
+| *(los cinco anteriores se cambian mejor desde **Ajustes**)* | | | |
 | Forzar HTTP | `HTTPS_ENABLED` | (sin fijar) | `false` recupera el arranque si un certificado falla |
 | Intentos antes de bloquear | `LOGIN_MAX_ATTEMPTS` | `10` | Frenar la fuerza bruta |
 
@@ -265,8 +269,15 @@ Para exponerlo a internet hacen falta dos cosas, y las dos:
    navegador nunca devuelve la cookie y el login se queda en un bucle sin
    ningún mensaje de error.
 
-Conviene además ponerle un `MAX_UPLOAD_MB` y un `USER_QUOTA_MB`. Sigue sin haber
-2FA.
+Conviene además ponerle un `MAX_UPLOAD_MB` y un `USER_QUOTA_MB`. Ojo con dos
+cosas al exponerlo:
+
+- `MAX_UPLOAD_MB` **no se aplica a quien entra desde una IP privada**, porque de
+  fábrica `LAN_SIN_LIMITE` está en `true`. Con un proxy inverso delante y sin
+  `BEHIND_PROXY=true`, todas las peticiones llegan con la IP del proxy y
+  parecerían venir de la LAN: o pones `BEHIND_PROXY=true` (que es lo correcto
+  igualmente), o desactivas el ajuste desde **Ajustes**.
+- Sigue sin haber 2FA.
 
 ## 🤝 Contribuciones 🤝
 ---

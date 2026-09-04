@@ -119,13 +119,32 @@
 
       const formData = new FormData(form);
       const xhr = new XMLHttpRequest();
-      const startTime = Date.now();
+      // Sin límite de tiempo: el valor por defecto ya es 0, pero dejarlo
+      // escrito evita que alguien "arregle" una subida larga poniendo aquí un
+      // número. El servidor tampoco corta (gunicorn arranca con --timeout 0).
+      xhr.timeout = 0;
+
+      // Velocidad de los últimos segundos, no la media desde el principio.
+      // Al empezar, el navegador vuelca de golpe unos megas en el búfer del
+      // socket y los da por "enviados": la media arranca disparada y luego
+      // baja durante toda la subida, lo que se lee como que el servidor va
+      // frenando cuando en realidad es el contador el que se está corrigiendo.
+      const VENTANA_MS = 5000;
+      const muestras = [{ t: Date.now(), loaded: 0 }];
 
       xhr.upload.addEventListener('progress', function (evt) {
         if (!evt.lengthComputable) return;
-        const elapsedSec = (Date.now() - startTime) / 1000;
+
+        const ahora = Date.now();
+        muestras.push({ t: ahora, loaded: evt.loaded });
+        while (muestras.length > 2 && ahora - muestras[0].t > VENTANA_MS) {
+          muestras.shift();
+        }
+
+        const primera = muestras[0];
+        const segundos = (ahora - primera.t) / 1000;
+        const speed = segundos > 0 ? (evt.loaded - primera.loaded) / segundos : 0;
         const pct = (evt.loaded / evt.total) * 100;
-        const speed = elapsedSec > 0 ? evt.loaded / elapsedSec : 0;
         const eta = speed > 0 ? (evt.total - evt.loaded) / speed : Infinity;
 
         fill.style.width = pct.toFixed(1) + '%';
@@ -219,6 +238,16 @@
         });
       });
     }
+
+    // Interruptores de Ajustes: el texto de al lado se pinta en el servidor,
+    // así que sin esto seguiría diciendo "Desactivado" con el interruptor ya
+    // movido, hasta guardar.
+    document.querySelectorAll('.switch input[type="checkbox"]').forEach(function (casilla) {
+      casilla.addEventListener('change', function () {
+        const texto = casilla.parentElement.querySelector('.switch-texto');
+        if (texto) texto.textContent = casilla.checked ? 'Activado' : 'Desactivado';
+      });
+    });
 
     const uploadForm = document.getElementById('upload-form');
     if (uploadForm) prepararSubida(uploadForm);

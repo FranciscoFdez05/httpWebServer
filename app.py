@@ -1,5 +1,6 @@
 import configparser
 import io
+import ipaddress
 import logging
 import mimetypes
 import os
@@ -14,7 +15,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from flask import (
-    Flask, request, redirect, url_for, render_template,
+    Flask, Request as PeticionBase, request, redirect, url_for, render_template,
     send_from_directory, send_file, abort, flash, g, jsonify, session
 )
 from flask_login import (
@@ -36,7 +37,7 @@ import tls
 # para etiquetar la imagen que construye (porfolio de imágenes etiquetadas =
 # poder volver atrás en segundos) y /api/health la devuelve para saber qué
 # versión está realmente en marcha, no cuál crees que desplegaste.
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 # Explicit allowlist of MIME types that are safe to render inline (never
 # includes text/html, xml, or svg, which could execute script if previewed
@@ -127,6 +128,10 @@ def limite_subida_mb():
     return ajustes.valor("max_upload_mb", DATA_DIR)
 
 
+def lan_sin_limite():
+    return ajustes.valor("lan_sin_limite", DATA_DIR)
+
+
 def cuota_usuario_mb():
     return ajustes.valor("user_quota_mb", DATA_DIR)
 
@@ -145,6 +150,132 @@ def intentos_maximos_login():
 
 def ventana_login_minutos():
     return ajustes.valor("login_window_minutes", DATA_DIR)
+
+
+# ── Red local ─────────────────────────────────────────────────────────────────
+# Las redes que cuentan como "de casa", escritas una a una a propósito. La
+# alternativa cómoda —ipaddress.is_private— mete dentro cosas que no son una
+# LAN (los rangos de documentación como 203.0.113.0/24, por ejemplo), y aquí de
+# esta lista depende a quién se le aplica el límite de subida.
+REDES_LAN = tuple(ipaddress.ip_network(red) for red in (
+    "10.0.0.0/8",        # RFC 1918
+    "172.16.0.0/12",     # RFC 1918 (incluye el puente de Docker, 172.17.x)
+    "192.168.0.0/16",    # RFC 1918
+    "127.0.0.0/8",       # la propia máquina
+    "169.254.0.0/16",    # enlace local, sin DHCP
+    "::1/128",           # la propia máquina, IPv6
+    "fc00::/7",          # direcciones únicas locales, IPv6
+    "fe80::/10",         # enlace local, IPv6
+))
+
+
+def es_de_la_lan(ip):
+    """Si la petición viene de la propia red (o de la propia máquina).
+
+    Se mira la IP de origen tal cual la ve la aplicación. Detrás de un proxy
+    inverso eso es la IP del proxy —privada— salvo que BEHIND_PROXY esté a true
+    y ProxyFix esté leyendo X-Forwarded-For; de ahí el aviso en la pantalla de
+    Ajustes, porque con un proxy mal configurado todo el mundo parecería estar
+    dentro de la LAN.
+    """
+    if not ip:
+        return False
+    try:
+        direccion = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    # Un cliente IPv4 sobre un socket IPv6 llega como ::ffff:192.168.1.7, y
+    # sobre esa forma is_private no responde por la IPv4 que lleva dentro.
+    direccion = getattr(direccion, "ipv4_mapped", None) or direccion
+    return any(direccion in red for red in REDES_LAN if red.version == direccion.version)
+
+
+# ── Subidas: del socket al disco una sola vez ─────────────────────────────────
+# Werkzeug, por su cuenta, escribe cada fichero que llega en un temporal del
+# sistema y luego lo copia al destino en trozos de 16 KB. Son dos escrituras
+# completas del fichero (y una lectura entera de más) para algo que puede
+# ocupar varios GB: en una LAN rápida el cuello de botella pasa a ser el disco,
+# no la red, y la subida va a la mitad de lo que podría.
+#
+# Aquí el temporal se crea YA en el directorio de subidas, así que está en el
+# mismo sistema de ficheros que el destino final y guardar es un rename: cero
+# bytes copiados. El prefijo con punto lo distingue de un fichero subido de
+# verdad (nada del código lista este directorio, pero un punto delante lo deja
+# claro para quien mire el volumen).
+PREFIJO_TEMPORAL = ".subiendo-"
+
+
+class PeticionConSubidaDirecta(PeticionBase):
+    def _get_file_stream(self, total_content_length, content_type,
+                         filename=None, content_length=None):
+        if not filename:
+            # Un campo normal del formulario (visibility, csrf_token…): sigue
+            # yendo en memoria como siempre.
+            return super()._get_file_stream(
+                total_content_length, content_type, filename, content_length
+            )
+        descriptor, ruta_temporal = tempfile.mkstemp(
+            dir=UPLOAD_DIR, prefix=PREFIJO_TEMPORAL
+        )
+        # Se cierra el descriptor y se vuelve a abrir por ruta: un fichero
+        # abierto con os.fdopen tiene como .name el número del descriptor, y
+        # es por .name por donde guardar_subida averigua que puede renombrar
+        # en vez de copiar.
+        os.close(descriptor)
+        flujo = open(ruta_temporal, "rb+")
+        # Si la subida se corta a la mitad (el navegador cancela, la red se
+        # cae, el límite de tamaño la rechaza) nadie llegará a renombrar este
+        # fichero: se apunta para cerrarlo y borrarlo al terminar la petición.
+        g.setdefault("temporales_de_subida", []).append(flujo)
+        return flujo
+
+
+def guardar_subida(archivo, destino):
+    """Deja en `destino` el fichero recibido, sin copiarlo si se puede evitar."""
+    flujo = archivo.stream
+    origen = getattr(flujo, "name", None)
+    if isinstance(origen, str) and os.path.dirname(origen) == UPLOAD_DIR:
+        # Cerrar antes de renombrar no es opcional: en Windows, mover o borrar
+        # un fichero con un descriptor abierto encima falla.
+        flujo.close()
+        os.replace(origen, destino)
+        # mkstemp crea con 600; los ficheros que escribía save() quedaban en
+        # 644. Se iguala para no dejar el volumen con dos permisos distintos
+        # según la versión con la que se subió cada cosa.
+        os.chmod(destino, 0o644)
+        pendientes = g.get("temporales_de_subida")
+        if pendientes and flujo in pendientes:
+            pendientes.remove(flujo)      # ya no hay nada que limpiar al final
+        return
+
+    # Camino de reserva: si algún día Werkzeug deja de usar este gancho, o la
+    # parte venía en memoria por ser diminuta, se copia como siempre. El búfer
+    # de 1 MB en vez de los 16 KB de la biblioteca ahorra la mayor parte de las
+    # llamadas al sistema en un fichero grande.
+    archivo.save(destino, buffer_size=1024 * 1024)
+
+
+def limpiar_temporales_huerfanos():
+    """Barrido de arranque: si el proceso murió a media subida, el temporal se
+    quedó ahí ocupando sitio y ya no lo va a reclamar nadie."""
+    try:
+        nombres = os.listdir(UPLOAD_DIR)
+    except OSError:
+        return
+    for nombre in nombres:
+        if not nombre.startswith(PREFIJO_TEMPORAL):
+            continue
+        camino = os.path.join(UPLOAD_DIR, nombre)
+        try:
+            # Una hora de margen: con varios workers, otro proceso puede estar
+            # recibiendo ahora mismo una subida larga en su propio temporal.
+            if time.time() - os.path.getmtime(camino) < 3600:
+                continue
+            os.remove(camino)
+            log.info("Temporal de subida huérfano borrado: %s", nombre)
+        except OSError:
+            pass
+
 
 # ── Seguridad ─────────────────────────────────────────────────────────────────
 # behind_proxy activa dos cosas que solo son correctas detrás de un proxy con
@@ -180,6 +311,7 @@ DB_TIMEOUT_S = ajuste_int("server", "db_timeout_seconds", "DB_TIMEOUT_SECONDS", 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__)
+app.request_class = PeticionConSubidaDirecta
 _secret_key = os.environ.get("SECRET_KEY")
 if not _secret_key:
     # Persist a generated key to disk so sessions (and "remember me" logins)
@@ -244,7 +376,34 @@ def make_session_permanent():
     # después de este gancho, así que cambiarlo ahora ya cuenta para esta misma
     # subida y para todos los workers por igual.
     mb = limite_subida_mb()
+    # El límite existe para cuando el servidor está expuesto a internet. Desde
+    # la propia red no hay nada de lo que protegerse —quien está dentro ya
+    # podría llenar el disco de otras formas— y sí algo que perder: cortar a
+    # mitad una subida de varios GB por un tope pensado para otra cosa.
+    if mb > 0 and lan_sin_limite() and es_de_la_lan(request.remote_addr):
+        mb = 0
     app.config["MAX_CONTENT_LENGTH"] = mb * 1024 * 1024 if mb > 0 else None
+
+
+@app.teardown_request
+def borrar_temporales_de_subida(exc=None):
+    """Cierra la petición sin dejar basura.
+
+    Una subida que termina bien renombra su temporal y no deja nada que
+    borrar; una que se corta (cancelada, red caída, rechazada por tamaño) sí,
+    y esos bytes ya escritos ocupan disco hasta que alguien los encuentre.
+    """
+    for flujo in g.pop("temporales_de_subida", []):
+        try:
+            flujo.close()
+        except OSError:
+            pass
+        try:
+            os.remove(flujo.name)
+        except OSError:
+            # En Windows también salta aquí si algo mantiene el fichero
+            # abierto. El barrido de arranque lo recogerá más adelante.
+            pass
 
 
 @app.after_request
@@ -822,7 +981,7 @@ def upload():
                 continue
             stored_name = f"{uuid.uuid4().hex}_{original_name}"
             dest_path = os.path.join(UPLOAD_DIR, stored_name)
-            uploaded_file.save(dest_path)
+            guardar_subida(uploaded_file, dest_path)
             size_bytes = os.path.getsize(dest_path)
 
             # El tamaño real solo se conoce cuando el fichero ya está escrito
@@ -1290,11 +1449,15 @@ def admin_ajustes():
                 continue      # el campo va bloqueado; ni se mira lo que llegue
             if clave not in request.form:
                 continue
-            numero, error = ajustes.validar(clave, request.form[clave])
+            # getlist y el último, no request.form[clave], que devuelve el
+            # primero: una casilla viaja como dos campos con el mismo nombre
+            # (el oculto con "0" y, si está marcada, la casilla con "1"), y
+            # quedarse con el primero la dejaría siempre desmarcada.
+            valor_nuevo, error = ajustes.validar(clave, request.form.getlist(clave)[-1])
             if error:
                 errores.append(error)
             else:
-                cambios[clave] = numero
+                cambios[clave] = valor_nuevo
 
         if errores:
             for error in errores:
@@ -1409,6 +1572,7 @@ def lan_ip():
 
 
 init_db()
+limpiar_temporales_huerfanos()
 log.info("Datos en %s (base de datos: %s)", DATA_DIR, DB_PATH)
 
 if __name__ == "__main__":
@@ -1428,6 +1592,14 @@ if __name__ == "__main__":
             port=SERVER_PORT,
             threads=16,
             max_request_body_size=1024 ** 5,  # 1 PB, en la práctica sin límite
+            # Sin esto, waitress cierra la conexión tras 120 s sin actividad.
+            # Una subida activa no llega a los 120 s de silencio, pero una red
+            # con un bache sí, y se ve como "error de red" al 80 % de un
+            # fichero grande. Un día de margen es, en la práctica, sin límite.
+            channel_timeout=86400,
+            # Lee del socket en trozos de 64 KB en vez de 8 KB: a velocidad de
+            # LAN son ocho veces menos llamadas al sistema por cada MB.
+            recv_bytes=65536,
         )
     except KeyboardInterrupt:
         log.info("Servidor detenido.")

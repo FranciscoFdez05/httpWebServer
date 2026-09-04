@@ -48,6 +48,20 @@ DEFINICIONES = {
                  "quien pueda subir puede llenarte el disco.",
         "minimo": 0,
     },
+    "lan_sin_limite": {
+        "seccion": "server",
+        "env": "LAN_SIN_LIMITE",
+        "tipo": "bool",
+        "defecto": True,
+        "grupo": "Subidas",
+        "etiqueta": "Sin límite de tamaño desde la red local",
+        "ayuda": "El límite de arriba solo se aplica a quien entra desde fuera "
+                 "de la red local. Desde una IP privada (192.168.x, 10.x, "
+                 "172.16-31.x) o desde la propia máquina se sube sin tope. Si "
+                 "hay un proxy inverso delante y BEHIND_PROXY no está a true, "
+                 "todas las peticiones parecen venir de la LAN y el límite no "
+                 "se aplicaría a nadie.",
+    },
     "user_quota_mb": {
         "seccion": "server",
         "env": "USER_QUOTA_MB",
@@ -109,6 +123,17 @@ GRUPOS = ("Subidas", "Seguridad")
 _cache = {}
 
 
+# Los ajustes son enteros salvo los que se declaran "bool". Un booleano no
+# tiene mínimo ni máximo y en la pantalla sale como una casilla, no como un
+# campo numérico; el resto del módulo se comporta igual para los dos.
+CIERTOS = ("1", "true", "yes", "on", "si", "sí")
+FALSOS = ("0", "false", "no", "off")
+
+
+def es_booleano(clave):
+    return DEFINICIONES[clave].get("tipo") == "bool"
+
+
 def valores_de_fabrica(config=None):
     """Lee config.ini una sola vez y deja un entero válido para cada ajuste.
 
@@ -125,15 +150,18 @@ def valores_de_fabrica(config=None):
     config = _config if config is None else config
     valores = {}
     for clave, definicion in DEFINICIONES.items():
+        leer = config.getboolean if es_booleano(clave) else config.getint
         try:
-            valores[clave] = config.getint(
+            valores[clave] = leer(
                 definicion["seccion"], clave, fallback=definicion["defecto"]
             )
         except ValueError:
             bruto = config.get(definicion["seccion"], clave, fallback="")
             log.warning(
-                "config.ini: [%s] %s = %r no es un número; se usa %s.",
-                definicion["seccion"], clave, bruto, definicion["defecto"],
+                "config.ini: [%s] %s = %r no es un %s; se usa %s.",
+                definicion["seccion"], clave,
+                bruto, "sí/no" if es_booleano(clave) else "número",
+                definicion["defecto"],
             )
             valores[clave] = definicion["defecto"]
     return valores
@@ -194,7 +222,24 @@ def fijado_en_entorno(clave):
     return _de_entorno(clave) is not None
 
 
-def _a_entero(bruto, defecto):
+def _a_booleano(bruto, defecto):
+    texto = str(bruto).strip().lower()
+    if texto in CIERTOS:
+        return True
+    if texto in FALSOS:
+        return False
+    return defecto
+
+
+def _convertir(clave, bruto, defecto):
+    """Lo leído del entorno o del JSON, al tipo del ajuste.
+
+    Nunca lanza: si el valor guardado no vale (un .env con LAN_SIN_LIMITE=quizá,
+    un JSON editado a mano), se usa el de fábrica en vez de dejar el servidor
+    devolviendo un 500 en cada petición.
+    """
+    if es_booleano(clave):
+        return _a_booleano(bruto, defecto)
     try:
         return int(str(bruto).strip())
     except (TypeError, ValueError):
@@ -206,11 +251,11 @@ def valor(clave, data_dir):
 
     del_entorno = _de_entorno(clave)
     if del_entorno is not None:
-        return _a_entero(del_entorno, defecto)
+        return _convertir(clave, del_entorno, defecto)
 
     guardado = leer_archivo(data_dir)
     if clave in guardado:
-        return _a_entero(guardado[clave], defecto)
+        return _convertir(clave, guardado[clave], defecto)
 
     return defecto
 
@@ -223,6 +268,17 @@ def validar(clave, bruto):
     """Devuelve (valor, error). El error es el texto que verá el usuario."""
     definicion = DEFINICIONES[clave]
     texto = str(bruto).strip()
+
+    if es_booleano(clave):
+        # Una casilla manda "1" cuando está marcada y nada cuando no; el campo
+        # oculto que la acompaña en la plantilla convierte ese "nada" en "0",
+        # así una casilla desmarcada se guarda en vez de ignorarse.
+        if texto.lower() in CIERTOS:
+            return True, None
+        if texto.lower() in FALSOS or not texto:
+            return False, None
+        return None, f"«{definicion['etiqueta']}» solo puede estar marcado o no."
+
     if not texto:
         return None, f"«{definicion['etiqueta']}» no puede quedar vacío."
     try:
@@ -243,9 +299,9 @@ def guardar(data_dir, cambios):
     """Escribe los ajustes. Solo guarda lo que NO esté fijado en el entorno."""
     os.makedirs(data_dir, exist_ok=True)
     datos = dict(leer_archivo(data_dir))
-    for clave, numero in cambios.items():
+    for clave, valor_nuevo in cambios.items():
         if clave in DEFINICIONES and not fijado_en_entorno(clave):
-            datos[clave] = numero
+            datos[clave] = valor_nuevo
 
     # Se escribe en un temporal del mismo directorio y se sustituye de forma
     # atómica: si el proceso muriera a media escritura, un JSON cortado por la

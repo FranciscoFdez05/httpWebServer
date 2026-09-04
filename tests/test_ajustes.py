@@ -230,6 +230,8 @@ def test_el_limite_de_subida_guardado_se_aplica_a_una_subida(modulo, monkeypatch
             "visibility": "private_me",
         },
         content_type="multipart/form-data",
+        # Desde fuera de la LAN: dentro, el límite no se aplica (lan_sin_limite).
+        environ_base={"REMOTE_ADDR": "203.0.113.9"},
     )
     assert respuesta.status_code == 413
 
@@ -292,3 +294,55 @@ def test_valor_no_relee_config_ini_en_cada_llamada(datos, monkeypatch):
 
     monkeypatch.setattr(ajustes._config, "getint", explota)
     assert ajustes.valor("min_free_disk_mb", datos) == 1024
+
+
+# ── Ajustes de sí/no ──────────────────────────────────────────────────────────
+
+def test_un_booleano_sale_de_fabrica_como_bool(datos, monkeypatch):
+    monkeypatch.delenv("LAN_SIN_LIMITE", raising=False)
+    assert ajustes.valor("lan_sin_limite", datos) is True
+    assert ajustes.es_booleano("lan_sin_limite") is True
+
+
+def test_un_booleano_guardado_a_false_se_respeta(datos, monkeypatch):
+    """El caso que rompe si se trata como un entero: False y 0 se guardan
+    igual, pero al leerlos hay que devolver un bool, no un 0."""
+    monkeypatch.delenv("LAN_SIN_LIMITE", raising=False)
+    ajustes.guardar(datos, {"lan_sin_limite": False})
+    assert ajustes.valor("lan_sin_limite", datos) is False
+    assert ajustes.origen("lan_sin_limite", datos) == "guardado"
+
+
+def test_un_booleano_del_entorno_admite_las_formas_de_siempre(datos, monkeypatch):
+    for texto, esperado in (("false", False), ("0", False), ("no", False),
+                            ("true", True), ("1", True), ("sí", True)):
+        monkeypatch.setenv("LAN_SIN_LIMITE", texto)
+        assert ajustes.valor("lan_sin_limite", datos) is esperado, texto
+
+
+def test_un_booleano_ilegible_no_tumba_nada(datos, monkeypatch):
+    monkeypatch.setenv("LAN_SIN_LIMITE", "quizá")
+    assert ajustes.valor("lan_sin_limite", datos) is True   # el de fábrica
+
+
+def test_desmarcar_la_casilla_se_guarda(modulo, monkeypatch):
+    """Una casilla desmarcada no envía nada; el campo oculto de la plantilla es
+    lo que hace que «no» se guarde en vez de dejar el valor anterior."""
+    monkeypatch.delenv("LAN_SIN_LIMITE", raising=False)
+    cliente = modulo.app.test_client()
+    entrar(cliente, "root", "contrasena-de-instalacion")
+
+    # Como lo manda el navegador: el oculto siempre, la casilla solo si va marcada.
+    cliente.post("/admin/ajustes", data={"accion": "guardar", "lan_sin_limite": ["0"]})
+    assert modulo.lan_sin_limite() is False
+
+    cliente.post("/admin/ajustes", data={"accion": "guardar", "lan_sin_limite": ["0", "1"]})
+    assert modulo.lan_sin_limite() is True
+
+
+def test_la_pantalla_pinta_la_casilla(modulo):
+    cliente = modulo.app.test_client()
+    entrar(cliente, "root", "contrasena-de-instalacion")
+    cuerpo = cliente.get("/admin/ajustes").get_data(as_text=True)
+    assert 'type="checkbox"' in cuerpo
+    assert 'name="lan_sin_limite"' in cuerpo

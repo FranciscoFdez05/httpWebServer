@@ -6,6 +6,46 @@ y el versionado es [semántico](https://semver.org/lang/es/).
 `docker-update.sh` imprime la sección de la versión nueva al actualizar, así
 que el primer bloque `## [...]` de este fichero es lo que verá quien despliegue.
 
+## [1.2.0] - 2026-09-04
+
+### Cambiado
+- **Las subidas escriben en disco una sola vez.** Cada fichero que llegaba se
+  guardaba primero en un temporal del sistema y se copiaba después al volumen
+  de datos en trozos de 16 KB: dos escrituras completas y una lectura entera de
+  más por cada subida. Ahora el temporal se crea ya dentro del directorio de
+  subidas, así que guardar es un `rename` y no se copia ni un byte. En una LAN
+  rápida el cuello de botella era eso, no la red.
+  - Un temporal que no llegue a renombrarse (subida cancelada, red caída,
+    rechazo por tamaño) se borra al cerrar la petición, y al arrancar se
+    barren los que dejara un corte de luz.
+- **Sin límite de tiempo en las subidas, y bien contado.**
+  - `gunicorn` ya arrancaba con `--timeout 0`; ahora el servidor local
+    (waitress) tampoco cierra la conexión a los 120 s de un bache de red, y
+    lee del socket en trozos de 64 KB en vez de 8 KB.
+  - La velocidad de la barra de progreso se calcula sobre los últimos 5
+    segundos y no como media desde el principio. Al empezar, el navegador
+    vuelca de golpe unos megas en el búfer del socket y los da por enviados:
+    la media arrancaba disparada y bajaba durante el resto de la subida, que
+    se leía como que el servidor iba frenando. No frenaba; era el contador.
+
+### Añadido
+- Ajuste **«Sin límite de tamaño desde la red local»** (activado de fábrica).
+  El tope por subida está pensado para un servidor expuesto a internet; dentro
+  de casa cortaba subidas grandes sin proteger de nada. Desde una IP privada
+  (192.168.x, 10.x, 172.16-31.x) o desde la propia máquina se sube sin tope, y
+  desde fuera se sigue aplicando el límite configurado.
+  - Con un proxy inverso delante y `BEHIND_PROXY` sin poner a `true`, todas las
+    peticiones llegan con la IP privada del proxy y parecerían venir de la LAN.
+    La pantalla de Ajustes lo advierte.
+- La pantalla de Ajustes admite ajustes de sí/no, con interruptor.
+
+### Arreglado
+- Los campos numéricos de Ajustes salían con el fondo blanco del navegador: el
+  CSS solo daba estilo a los de texto y contraseña.
+- Rediseño de la pantalla de Ajustes: cada ajuste es una fila con su
+  explicación a la izquierda y el campo alineado a la derecha, agrupados en
+  tarjetas. Antes era un bloque estrecho con todo el texto centrado.
+
 ## [1.1.0] - 2026-09-04
 
 ### Añadido
