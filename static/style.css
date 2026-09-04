@@ -1,6 +1,15 @@
 * { box-sizing: border-box; }
 
 :root {
+  /* Los controles que pinta el navegador y no este CSS —la flechita de subir
+     y bajar de los campos numéricos, las barras de desplazamiento, el botón de
+     elegir fichero— los dibuja claros mientras no se le diga lo contrario. En
+     la pantalla de Ajustes eso era un bloque blanco pegado al número, dentro
+     de un campo oscuro. Declarar el esquema hace que use su versión oscura,
+     que es la que encaja con el resto; no basta con dar color al campo, porque
+     la flecha no es parte del campo. */
+  color-scheme: dark;
+
   --bg: #0d1420;
   --bg-panel: #161f2e;
   --bg-panel-alt: #1b2436;
@@ -684,6 +693,12 @@ section + section { margin-top: 2.5rem; }
   font-variant-numeric: tabular-nums;
   text-align: right;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* La flecha se dibuja dentro del hueco del texto, y con el número alineado a
+   la derecha las dos cosas acaban tocándose. Este margen las separa. */
+.setting-control input[type="number"]::-webkit-inner-spin-button {
+  margin-left: 0.45rem;
 }
 
 .setting-control input[type="number"]:focus {

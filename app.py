@@ -37,7 +37,7 @@ import tls
 # para etiquetar la imagen que construye (porfolio de imágenes etiquetadas =
 # poder volver atrás en segundos) y /api/health la devuelve para saber qué
 # versión está realmente en marcha, no cuál crees que desplegaste.
-__version__ = "1.2.2"
+__version__ = "1.2.3"
 
 # Explicit allowlist of MIME types that are safe to render inline (never
 # includes text/html, xml, or svg, which could execute script if previewed

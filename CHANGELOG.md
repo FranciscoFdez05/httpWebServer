@@ -6,6 +6,19 @@ y el versionado es [semántico](https://semver.org/lang/es/).
 `docker-update.sh` imprime la sección de la versión nueva al actualizar, así
 que el primer bloque `## [...]` de este fichero es lo que verá quien despliegue.
 
+## [1.2.3] - 2026-09-04
+
+### Arreglado
+- **La flecha de subir y bajar de los campos numéricos de Ajustes salía en
+  claro**: un bloque blanco pegado al número, dentro de un campo oscuro. Esa
+  flecha la dibuja el navegador, no el CSS de la página, y mientras no se le
+  diga de qué color va la interfaz la pinta clara aunque el campo sea negro.
+  Ahora el esquema está declarado (`color-scheme: dark`), así que el navegador
+  usa su propia versión oscura —y de paso también en las barras de
+  desplazamiento y en el botón de elegir fichero.
+- La flecha se dibuja dentro del hueco del texto y, con el número alineado a
+  la derecha, las dos cosas quedaban tocándose. Ahora hay un margen entre ellas.
+
 ## [1.2.2] - 2026-09-04
 
 ### Arreglado
