@@ -6,6 +6,47 @@ y el versionado es [semántico](https://semver.org/lang/es/).
 `docker-update.sh` imprime la sección de la versión nueva al actualizar, así
 que el primer bloque `## [...]` de este fichero es lo que verá quien despliegue.
 
+## [1.1.0] - 2026-09-04
+
+### Añadido
+- Pantalla de **Ajustes**, enlazada desde la barra superior: límites de subida,
+  cuota por usuario, reserva de disco, política de contraseñas, bloqueo por
+  intentos fallidos, y el interruptor del HTTPS. Antes había que entrar al
+  servidor a editar ficheros para cambiar cualquiera de estas cosas.
+  - Se aplican **al momento**, sin reiniciar. Los valores se leen en cada
+    petición: con varios workers de gunicorn, un ajuste guardado en memoria
+    solo lo vería el que atendió el formulario, y el resultado dependería de a
+    qué worker cayera cada petición.
+  - Lo guardado vive en el volumen de datos, que es el único sitio donde el
+    contenedor puede escribir: `config.ini` se monta en solo lectura y `.env`
+    ni siquiera está dentro del contenedor.
+  - Precedencia `.env` > Ajustes > `config.ini`. Un ajuste fijado en `.env`
+    sale **bloqueado** en la pantalla diciendo por qué, en vez de dejar guardar
+    algo que luego se ignoraría.
+- El número de versión se muestra en el pie de todas las páginas, para poder
+  comprobar de un vistazo qué versión está sirviendo el servidor.
+
+### Cambiado
+- El HTTPS se activa y desactiva desde **Ajustes**. Estaba escondido detrás de
+  Administración y no se encontraba.
+- El contenedor y el volumen de Docker pasan a llamarse `httpWebServer`. La
+  imagen se queda en `httpwebserver` (minúsculas) porque Docker no admite
+  mayúsculas en el nombre de una imagen.
+- La salida de `docker-up.sh` indica si el servidor quedó en `http` o `https`.
+
+### Corregido
+- Una errata en `config.ini` (`min_free_disk_mb = mil`) tumbaba **todas** las
+  peticiones. El `fallback` de `getint()` solo cubre que la opción no esté, no
+  que sea inválida, y el valor se resolvía en cada petición. Como también
+  afectaba a `/api/health`, `docker-update.sh` habría revertido una versión que
+  funcionaba por un simple error tipográfico. Ahora se resuelve una sola vez al
+  importar: avisa por el log y sigue con el valor por defecto.
+- `/data/tls` se creaba con permisos `0755` en instalaciones que ya tenían
+  datos. El Dockerfile lo deja en `700`, pero eso solo llega al volumen la
+  primera vez que Docker lo crea; si el volumen no está vacío, no copia nada.
+  Las claves ya se escribían con `0600`, así que nunca estuvieron expuestas,
+  pero el directorio no decía lo mismo que el Dockerfile.
+
 ## [1.0.0] - 2026-09-04
 
 Primera versión publicada.
@@ -28,20 +69,9 @@ Primera versión publicada.
   contraseñas y se eliminan cuentas; los usuarios nuevos deben cambiar su
   contraseña al entrar por primera vez.
 
-### Ajustes
-- Pantalla de **Ajustes** enlazada desde la barra superior: límites de subida,
-  cuota por usuario, reserva de disco, política de contraseñas, bloqueo por
-  intentos fallidos, y el interruptor del HTTPS. Se aplican al momento, sin
-  reiniciar.
-- Lo guardado vive en el volumen de datos: `config.ini` se monta en solo
-  lectura y `.env` no está dentro del contenedor. Los valores se leen en cada
-  petición para que todos los workers de gunicorn vean el mismo.
-- Precedencia `.env` > Ajustes > `config.ini`. Un ajuste fijado en `.env` sale
-  bloqueado en la pantalla, en vez de dejar guardar algo que se ignoraría.
-
 ### HTTPS en la red local
-- Se activa y desactiva desde **Ajustes**, desactivado por defecto. Crea una
-  autoridad certificadora propia y firma con ella el certificado del servidor,
+- Activable desde la interfaz, desactivado por defecto. Crea una autoridad
+  certificadora propia y firma con ella el certificado del servidor,
   y ofrece la CA para descargar e instalar en PC y móvil con las instrucciones
   de cada sistema.
 - La CA dura 10 años; el certificado del servidor, 825 días (el máximo que
@@ -79,10 +109,8 @@ Primera versión publicada.
   estado local, copia la base de datos y los certificados, construye la imagen
   etiquetada con su versión, y **espera a que `/api/health` responda**. Si la
   versión nueva no arranca, vuelve sola a la anterior.
-- Imágenes etiquetadas por versión (`httpwebserver:<version>`, en minúsculas
-  porque Docker lo exige), que es lo que hace posible volver atrás en segundos
-  en vez de reconstruyendo. El contenedor y el volumen se llaman `httpWebServer`.
-- El número de versión se muestra en el pie de todas las páginas.
+- Imágenes etiquetadas por versión, que es lo que hace posible volver atrás en
+  segundos en vez de reconstruyendo.
 - Endpoint `/api/health`: comprueba la base de datos y que el directorio de
   subidas sea escribible. Devuelve 503 si algo falla.
 - Configuración en dos capas: `config.ini` son los valores de fábrica y viaja
