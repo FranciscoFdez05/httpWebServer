@@ -158,3 +158,24 @@ def test_el_mime_no_lo_decide_el_cliente(modulo, cliente):
         db.close()
     assert fila["mime_type"] == "text/html"
     assert cliente.get("/preview/1").status_code == 415
+
+
+def test_descarga_por_url_con_nombre_y_comando_wget(modulo, cliente):
+    crear_usuario(modulo, "ana", "contrasena-larga")
+    entrar(cliente, "ana", "contrasena-larga")
+    subir(cliente, "dockerManager.py", b"hola", visibility="public")
+
+    anonimo = modulo.app.test_client()
+    # El nombre del final solo sirve para que wget guarde el fichero con él.
+    assert anonimo.get("/download/1/dockerManager.py").status_code == 200
+    assert anonimo.get("/download/1/cualquier-cosa.bin").status_code == 200
+    assert b'wget "http://localhost/download/1/dockerManager.py"' in anonimo.get("/").data
+
+
+def test_url_con_nombre_respeta_permisos(modulo, cliente):
+    crear_usuario(modulo, "ana", "contrasena-larga")
+    entrar(cliente, "ana", "contrasena-larga")
+    subir(cliente, "secreto.txt", b"hola", visibility="private_me")
+
+    anonimo = modulo.app.test_client()
+    assert anonimo.get("/download/1/secreto.txt").status_code == 403

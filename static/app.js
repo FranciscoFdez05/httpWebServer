@@ -78,6 +78,31 @@
     openModal('props-overlay');
   }
 
+  // ── Comando wget ───────────────────────────────────────────────────────────
+  function openWget(data) {
+    const campo = document.getElementById('wget-command');
+    campo.value = data.command;
+    document.getElementById('wget-private').classList.toggle('hidden', !!data.public);
+    document.getElementById('wget-copy').textContent = 'Copiar';
+    openModal('wget-overlay');
+    campo.focus();
+    campo.select();
+  }
+
+  function copyWget() {
+    const campo = document.getElementById('wget-command');
+    const boton = document.getElementById('wget-copy');
+    const hecho = function () { boton.textContent = 'Copiado'; };
+    campo.select();
+    // navigator.clipboard solo existe en contexto seguro, y la app se sirve
+    // por http en la LAN: de ahí el respaldo con execCommand.
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(campo.value).then(hecho);
+    } else if (document.execCommand('copy')) {
+      hecho();
+    }
+  }
+
   // ── Lista de destinatarios (subida y permisos) ─────────────────────────────
   // Solo se muestra al elegir "privado — seleccionar personas".
   function sincronizarListaUsuarios() {
@@ -193,6 +218,10 @@
         closeModal(target.dataset.modal);
       } else if (accion === 'preview') {
         openPreview(target.dataset.fileId, target.dataset.mime, target.dataset.name);
+      } else if (accion === 'wget') {
+        openWget(target.dataset);
+      } else if (accion === 'copy-wget') {
+        copyWget();
       } else if (accion === 'props') {
         openProps(target.dataset);
       }
@@ -248,6 +277,51 @@
         if (texto) texto.textContent = casilla.checked ? 'Activado' : 'Desactivado';
       });
     });
+
+    // Desplegable de versión (solo admins): consulta la última publicada.
+    const vToggle = document.getElementById('version-toggle');
+    if (vToggle) {
+      const panel = document.getElementById('version-panel');
+      const ultima = document.getElementById('version-ultima');
+      const estado = document.getElementById('version-estado');
+      const aviso = document.getElementById('version-aviso');
+      const comprobar = document.getElementById('version-comprobar');
+
+      const consultar = function (forzar) {
+        ultima.textContent = '…';
+        estado.hidden = true;
+        aviso.hidden = true;
+        fetch(vToggle.dataset.url + (forzar ? '?forzar=1' : ''), {credentials: 'same-origin'})
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (!d.ultima) { ultima.textContent = 'no disponible'; return; }
+            ultima.textContent = d.ultima;
+            estado.hidden = false;
+            estado.className = 'version-estado ' + (d.al_dia ? 'version-estado-ok' : 'version-estado-nueva');
+            estado.textContent = d.al_dia ? 'Al día' : 'Nueva';
+            aviso.hidden = d.al_dia;
+          })
+          .catch(function () { ultima.textContent = 'no disponible'; });
+      };
+
+      const cerrar = function () {
+        panel.hidden = true;
+        vToggle.setAttribute('aria-expanded', 'false');
+      };
+      vToggle.addEventListener('click', function () {
+        const abrir = panel.hidden;
+        panel.hidden = !abrir;
+        vToggle.setAttribute('aria-expanded', abrir ? 'true' : 'false');
+        if (abrir) consultar(false);
+      });
+      comprobar.addEventListener('click', function () { consultar(true); });
+      document.addEventListener('click', function (e) {
+        if (!panel.hidden && !e.target.closest('.version-menu')) cerrar();
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') cerrar();
+      });
+    }
 
     const uploadForm = document.getElementById('upload-form');
     if (uploadForm) prepararSubida(uploadForm);

@@ -4,6 +4,7 @@ import ipaddress
 import logging
 import mimetypes
 import os
+import re
 import secrets
 import shutil
 import socket
@@ -11,6 +12,7 @@ import sqlite3
 import sys
 import tempfile
 import time
+import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -37,7 +39,7 @@ import tls
 # para etiquetar la imagen que construye (porfolio de imágenes etiquetadas =
 # poder volver atrás en segundos) y /api/health la devuelve para saber qué
 # versión está realmente en marcha, no cuál crees que desplegaste.
-__version__ = "1.2.3"
+__version__ = "1.3.0"
 
 # Explicit allowlist of MIME types that are safe to render inline (never
 # includes text/html, xml, or svg, which could execute script if previewed
@@ -1050,8 +1052,12 @@ def upload():
     return render_template("upload.html", users=users)
 
 
+# La segunda ruta existe para wget/curl: sin --content-disposition guardan el
+# fichero con el último tramo de la URL, así que el nombre real va ahí. El
+# servidor lo ignora; manda el id.
 @app.route("/download/<int:file_id>")
-def download(file_id):
+@app.route("/download/<int:file_id>/<path:nombre>")
+def download(file_id, nombre=None):
     db = get_db()
     row = db.execute("SELECT * FROM files WHERE id = ?", (file_id,)).fetchone()
     if not row:
@@ -1361,6 +1367,50 @@ def health():
         "checks": checks,
     }
     return jsonify(payload), (200 if ok else 503)
+
+
+URL_VERSION_PUBLICADA = (
+    "https://raw.githubusercontent.com/FranciscoFdez05/httpWebServer/main/app.py"
+)
+_cache_version = {"hasta": 0.0, "valor": None}
+
+
+def version_publicada(forzar=False):
+    """Última versión en la rama principal del repositorio, o None si no se
+    pudo consultar. Se lee el `__version__` de app.py publicado (no hay
+    releases ni etiquetas fiables) y se guarda 10 minutos para no pegarle a
+    GitHub en cada clic."""
+    ahora = time.time()
+    if not forzar and ahora < _cache_version["hasta"]:
+        return _cache_version["valor"]
+    valor = None
+    try:
+        with urllib.request.urlopen(URL_VERSION_PUBLICADA, timeout=5) as r:
+            texto = r.read(200_000).decode("utf-8", "replace")
+        m = re.search(r'^__version__ = "([^"]+)"', texto, re.M)
+        valor = m.group(1) if m else None
+    except Exception as exc:
+        log.warning("No se pudo consultar la versión publicada: %s", exc)
+    _cache_version.update(hasta=ahora + (600 if valor else 30), valor=valor)
+    return valor
+
+
+def _tupla_version(v):
+    return tuple(int(x) if x.isdigit() else 0 for x in v.split("."))
+
+
+@app.route("/api/version")
+@login_required
+def api_version():
+    if not current_user.is_admin:
+        abort(403)
+    ultima = version_publicada(forzar=request.args.get("forzar") == "1")
+    return jsonify({
+        "instalada": __version__,
+        "ultima": ultima,
+        "al_dia": None if ultima is None
+                  else _tupla_version(ultima) <= _tupla_version(__version__),
+    })
 
 
 @app.route("/ca.crt")

@@ -36,6 +36,11 @@
               <td class="actions">
                 <div class="actions-inner">
                 <a class="btn btn-small" href="{{ url_for('download', file_id=f.id) }}">Descargar</a>
+                <button type="button" class="btn btn-small"
+                        data-action="wget"
+                        data-name="{{ f.original_name }}"
+                        data-public="{{ '1' if f.visibility == 'public' else '' }}"
+                        data-command='wget "{{ url_for('download', file_id=f.id, nombre=f.original_name, _external=True) }}"'>Comando</button>
                 {% if is_previewable(f.mime_type) %}
                   <button type="button" class="btn btn-small"
                           data-action="preview"
@@ -87,6 +92,22 @@
                 data-action="close-modal" data-modal="preview-overlay">&times;</button>
       </div>
       <div class="modal-body" id="preview-body"></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="wget-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Descargar desde el servidor</h2>
+        <button type="button" class="modal-close"
+                data-action="close-modal" data-modal="wget-overlay">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="hint">Copia este comando y ejecútalo en el servidor:</p>
+        <input type="text" id="wget-command" class="wget-command" readonly>
+        <p class="hint hidden" id="wget-private">Este archivo es privado: wget no tiene sesión iniciada y recibirá un 403. Solo funciona con archivos públicos.</p>
+        <button type="button" class="btn btn-small" data-action="copy-wget" id="wget-copy">Copiar</button>
+      </div>
     </div>
   </div>
 

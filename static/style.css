@@ -64,6 +64,54 @@ a { transition: color 0.15s ease; }
   letter-spacing: 0.01em;
 }
 
+.brand-group { display: flex; align-items: center; gap: 0.75rem; }
+
+.version-menu { position: relative; }
+
+.version-chip {
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.5rem;
+}
+button.version-chip { cursor: pointer; }
+button.version-chip:hover { color: var(--text); border-color: var(--accent); }
+
+.version-panel {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 0;
+  width: 18rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 0.9rem;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  z-index: 20;
+}
+.version-panel[hidden] { display: none; }
+.version-panel strong { color: var(--text); }
+.version-title { font-weight: 700; color: var(--text-muted); text-transform: uppercase; font-size: 0.75rem; margin-bottom: 0.5rem; }
+.version-row { margin-bottom: 0.4rem; }
+.version-estado { font-size: 0.75rem; padding: 0.05rem 0.5rem; border-radius: 999px; margin-left: 0.3rem; }
+.version-estado-ok { color: var(--green); border: 1px solid var(--green-dark); }
+.version-estado-nueva { color: var(--accent); border: 1px solid var(--accent); }
+.version-aviso {
+  margin: 0.6rem 0;
+  padding: 0.6rem;
+  border-radius: 8px;
+  border: 1px solid #854d0e;
+  background: #2a2410;
+  color: var(--accent);
+}
+.version-aviso code { display: block; margin-top: 0.3rem; color: var(--text); }
+.version-btn { width: 100%; margin-top: 0.4rem; }
+
 .topbar nav {
   display: flex;
   align-items: center;
@@ -925,4 +973,11 @@ section + section { margin-top: 2.5rem; }
   .setting-control { grid-row: auto; justify-self: stretch; text-align: left; }
   .setting-control .switch { justify-content: flex-start; }
   .setting-control input[type="number"] { text-align: left; }
+}
+
+.wget-command {
+  width: 100%;
+  margin-bottom: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
 }

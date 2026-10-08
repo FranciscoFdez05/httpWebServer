@@ -6,6 +6,22 @@ y el versionado es [semántico](https://semver.org/lang/es/).
 `docker-update.sh` imprime la sección de la versión nueva al actualizar, así
 que el primer bloque `## [...]` de este fichero es lo que verá quien despliegue.
 
+## [1.3.0] - 2026-10-08
+
+### Añadido
+- **Botón «Comando» en la lista de archivos**: abre una ventana con el
+  `wget "http://<servidor>/download/<id>/<nombre>"` del archivo, listo para
+  copiar (botón «Copiar», que también funciona por `http` en la LAN) y pegar
+  en el servidor donde se quiere descargar.
+- Nueva URL de descarga `/download/<id>/<nombre>`: el nombre del final lo
+  ignora el servidor (manda el id), pero hace que wget guarde el fichero con su
+  nombre real y no como `3`. La URL anterior `/download/<id>` sigue igual y
+  ambas respetan los mismos permisos.
+
+### Nota
+- wget no inicia sesión, así que con archivos privados recibe un 403; la
+  ventana lo avisa. Solo sirve para archivos públicos.
+
 ## [1.2.3] - 2026-09-04
 
 ### Arreglado
